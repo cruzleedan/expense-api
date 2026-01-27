@@ -1,0 +1,72 @@
+services:
+  expense-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: expense-api
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DATABASE_URL=postgresql://expense_user:expense_pass@postgres:5432/expense_db
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production-min-32-chars
+      - UPLOAD_DIR=/app/uploads
+      - RECEIPT_PARSER_URL=http://receipt-parser-app:3000
+      # OAuth credentials (configure as needed)
+      # - GOOGLE_CLIENT_ID=
+      # - GOOGLE_CLIENT_SECRET=
+      # - GOOGLE_REDIRECT_URI=http://localhost:3000/auth/google/callback
+      # - FACEBOOK_CLIENT_ID=
+      # - FACEBOOK_CLIENT_SECRET=
+      # - FACEBOOK_REDIRECT_URI=http://localhost:3000/auth/facebook/callback
+    volumes:
+      - ./src:/app/src:ro
+      - ./package.json:/app/package.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - expense-network
+      - caddy-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=expense_user
+      - POSTGRES_PASSWORD=expense_pass
+      - POSTGRES_DB=expense_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense_user -d expense_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - expense-network
+      - caddy-network
+    restart: unless-stopped
+
+  # Optional: Receipt parser service (placeholder)
+  # receipt-parser-app:
+  #   image: receipt-parser:latest
+  #   networks:
+  #     - expense-network
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  expense-network:
+    driver: bridge
+  caddy-network:
+    external: true
