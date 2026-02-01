@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS departments (
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    is_verified BOOLEAN NOT NULL DEFAULT false,
     username VARCHAR(255),
     password_hash VARCHAR(255),  -- NULL if OAuth-only user
     oauth_provider VARCHAR(50),  -- 'google', 'facebook', or NULL
@@ -167,6 +170,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     workflow_id UUID REFERENCES workflows(id),
     workflow_snapshot JSONB,  -- Frozen workflow at submission
     current_step INTEGER,
+    report_date DATE,
     submitted_at TIMESTAMP WITH TIME ZONE,
     approved_at TIMESTAMP WITH TIME ZONE,
     posted_at TIMESTAMP WITH TIME ZONE,
@@ -193,6 +197,18 @@ CREATE TABLE IF NOT EXISTS approval_history (
     was_escalated BOOLEAN DEFAULT false
 );
 
+-- Expense categories
+CREATE TABLE IF NOT EXISTS expense_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    code VARCHAR(50) UNIQUE,
+    description TEXT,
+    parent_id UUID REFERENCES expense_categories(id) ON DELETE SET NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Expense lines
 CREATE TABLE IF NOT EXISTS expense_lines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -201,7 +217,8 @@ CREATE TABLE IF NOT EXISTS expense_lines (
     amount DECIMAL(12,2) NOT NULL CHECK (amount >= 0),
     currency VARCHAR(3) DEFAULT 'USD',
     category VARCHAR(100),
-    expense_date DATE NOT NULL,
+    category_id UUID REFERENCES expense_categories(id) ON DELETE SET NULL,
+    transaction_date DATE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -296,8 +313,14 @@ CREATE INDEX IF NOT EXISTS idx_expense_reports_status ON expense_reports(status)
 CREATE INDEX IF NOT EXISTS idx_expense_reports_workflow ON expense_reports(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_expense_reports_submitted ON expense_reports(submitted_at);
 
+-- Expense category indexes
+CREATE INDEX IF NOT EXISTS idx_expense_categories_parent ON expense_categories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_expense_categories_active ON expense_categories(is_active);
+CREATE INDEX IF NOT EXISTS idx_expense_categories_code ON expense_categories(code);
+
 -- Expense line indexes
 CREATE INDEX IF NOT EXISTS idx_expense_lines_report_id ON expense_lines(report_id);
+CREATE INDEX IF NOT EXISTS idx_expense_lines_category_id ON expense_lines(category_id);
 
 -- Receipt indexes
 CREATE INDEX IF NOT EXISTS idx_receipts_report_id ON receipts(report_id);
@@ -366,6 +389,12 @@ CREATE TRIGGER update_departments_updated_at
 DROP TRIGGER IF EXISTS update_workflows_updated_at ON workflows;
 CREATE TRIGGER update_workflows_updated_at
     BEFORE UPDATE ON workflows
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_expense_categories_updated_at ON expense_categories;
+CREATE TRIGGER update_expense_categories_updated_at
+    BEFORE UPDATE ON expense_categories
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

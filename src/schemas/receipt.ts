@@ -4,14 +4,14 @@ import { ExpenseLineSchema } from './expenseLine.js';
 
 export const ReceiptSchema = z.object({
   id: z.string().uuid(),
-  report_id: z.string().uuid(),
-  file_path: z.string(),
-  file_name: z.string(),
-  file_hash: z.string(),
-  mime_type: z.string(),
-  file_size: z.number(),
-  parsed_data: z.record(z.unknown()).nullable(),
-  created_at: z.string().datetime(),
+  reportId: z.string().uuid(),
+  filePath: z.string(),
+  fileName: z.string(),
+  fileHash: z.string(),
+  mimeType: z.string(),
+  fileSize: z.number(),
+  parsedData: z.record(z.unknown()).nullable(),
+  createdAt: z.string().datetime(),
 }).openapi('Receipt');
 
 export const ParsedReceiptDataSchema = z.object({
@@ -23,13 +23,24 @@ export const ParsedReceiptDataSchema = z.object({
     description: z.string(),
     amount: z.number(),
   })).optional(),
-  raw_text: z.string().optional(),
+  rawText: z.string().optional(),
 }).openapi('ParsedReceiptData');
 
 export const ReceiptUploadResponseSchema = z.object({
   receipt: ReceiptSchema,
   parsedData: ParsedReceiptDataSchema.optional(),
 }).openapi('ReceiptUploadResponse');
+
+// Allowed sortBy values for receipts
+export const ReceiptSortBySchema = z.enum(['fileName', 'fileSize', 'createdAt']);
+
+export const ReceiptListQuerySchema = z.object({
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  search: z.string().max(255).optional().openapi({ example: 'invoice', description: 'Search in file name' }),
+  sortBy: ReceiptSortBySchema.optional().openapi({ example: 'createdAt', description: 'Field to sort by' }),
+  sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),
+});
 
 export const ReceiptListResponseSchema = z.object({
   data: z.array(ReceiptSchema),

@@ -34,6 +34,7 @@ import {
   RoleIdParamSchema,
   UserIdParamSchema,
   PermissionCategoryParamSchema,
+  RoleListQuerySchema,
 } from '../schemas/role.js';
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
 
@@ -52,8 +53,11 @@ const listRolesRoute = createRoute({
   path: '/',
   tags: ['Roles'],
   summary: 'List all roles',
-  description: 'Get a list of all active roles in the system',
+  description: 'Get a list of all active roles in the system with pagination',
   security: [{ bearerAuth: [] }],
+  request: {
+    query: RoleListQuerySchema,
+  },
   responses: {
     200: {
       description: 'List of roles',
@@ -70,15 +74,45 @@ const listRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(listRolesRoute, requirePermission('role.view'), async (c) => {
-  const roles = await getAllRoles();
+rolesRouter.openapi(listRolesRoute, async (c) => {
+  // Get user from JWT
+  const user = c.get('user') as any;
+  if (!user?.permissions?.includes('role.view')) {
+    throw new ForbiddenError('Insufficient permissions');
+  }
+
+  const query = c.req.valid('query');
+  const paginationParams = {
+    page: query.page,
+    limit: query.limit,
+    search: query.search,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+  };
+
+  const { roles, total } = await getAllRoles(paginationParams);
+
+  const totalPages = Math.ceil(total / paginationParams.limit);
+
   return c.json({
     roles: roles.map(r => ({
-      ...r,
-      created_at: r.created_at.toISOString(),
-      updated_at: r.updated_at.toISOString(),
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      isSystem: r.is_system,
+      isActive: r.is_active,
+      permissionCount: parseInt(String((r as any).permission_count || 0)),
+      createdAt: r.created_at.toISOString(),
+      updatedAt: r.updated_at.toISOString(),
     })),
-    total: roles.length,
+    pagination: {
+      page: paginationParams.page,
+      limit: paginationParams.limit,
+      total,
+      totalPages,
+      hasNext: paginationParams.page < totalPages,
+      hasPrev: paginationParams.page > 1,
+    },
   }, 200);
 });
 

@@ -43,6 +43,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./src/db/seed-users.sql:/docker-entrypoint-initdb.d/02-seed-users.sql:ro
     ports:
       - "5433:5432"
     healthcheck:

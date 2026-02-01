@@ -2,14 +2,21 @@ import { query } from '../db/client.js';
 import type { ExpenseLine } from '../types/index.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
-import { getOffset, type PaginationParams } from '../utils/pagination.js';
+import {
+  getOffset,
+  buildOrderByClause,
+  buildSearchCondition,
+  EXPENSE_LINE_SORTABLE_FIELDS,
+  EXPENSE_LINE_SEARCHABLE_FIELDS,
+  type PaginationParams,
+} from '../utils/pagination.js';
 
 export interface CreateExpenseLineInput {
   description: string;
   amount: number;
   currency?: string;
   category?: string;
-  expense_date: string; // ISO date string
+  transactionDate?: string;
 }
 
 export interface UpdateExpenseLineInput {
@@ -17,7 +24,7 @@ export interface UpdateExpenseLineInput {
   amount?: number;
   currency?: string;
   category?: string;
-  expense_date?: string;
+  transactionDate?: string;
 }
 
 export async function createExpenseLine(
@@ -29,7 +36,7 @@ export async function createExpenseLine(
   await verifyReportOwnership(reportId, userId);
 
   const result = await query<ExpenseLine>(
-    `INSERT INTO expense_lines (report_id, description, amount, currency, category, expense_date)
+    `INSERT INTO expense_lines (report_id, description, amount, currency, category, transaction_date)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
     [
@@ -38,7 +45,7 @@ export async function createExpenseLine(
       input.amount,
       input.currency ?? 'USD',
       input.category ?? null,
-      input.expense_date,
+      input.transactionDate,
     ]
   );
 
@@ -81,17 +88,41 @@ export async function listExpenseLines(
   await verifyReportOwnership(reportId, userId);
 
   const offset = getOffset(params);
+  const conditions = ['report_id = $1'];
+  const values: unknown[] = [reportId];
+  let paramIndex = 2;
+
+  // Add search condition if provided
+  const searchCondition = buildSearchCondition(
+    params.search,
+    EXPENSE_LINE_SEARCHABLE_FIELDS,
+    paramIndex
+  );
+  if (searchCondition) {
+    conditions.push(searchCondition.condition);
+    values.push(searchCondition.value);
+    paramIndex = searchCondition.nextParamIndex;
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  // Build ORDER BY clause with allowed fields, default to transaction_date DESC, created_at DESC
+  const orderBy = buildOrderByClause(
+    params,
+    EXPENSE_LINE_SORTABLE_FIELDS,
+    'transaction_date DESC, created_at DESC'
+  );
 
   const [dataResult, countResult] = await Promise.all([
     query<ExpenseLine>(
-      `SELECT * FROM expense_lines WHERE report_id = $1
-       ORDER BY expense_date DESC, created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [reportId, params.limit, offset]
+      `SELECT * FROM expense_lines WHERE ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      [...values, params.limit, offset]
     ),
     query<{ count: string }>(
-      'SELECT COUNT(*) as count FROM expense_lines WHERE report_id = $1',
-      [reportId]
+      `SELECT COUNT(*) as count FROM expense_lines WHERE ${whereClause}`,
+      values
     ),
   ]);
 
@@ -137,9 +168,9 @@ export async function updateExpenseLine(
     paramIndex++;
   }
 
-  if (input.expense_date !== undefined) {
-    updates.push(`expense_date = $${paramIndex}`);
-    values.push(input.expense_date);
+  if (input.transactionDate !== undefined) {
+    updates.push(`transaction_date = $${paramIndex}`);
+    values.push(input.transactionDate);
     paramIndex++;
   }
 

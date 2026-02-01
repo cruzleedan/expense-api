@@ -5,7 +5,14 @@ import { verifyReportOwnership } from './expenseReport.service.js';
 import { sha256 } from '../utils/hash.js';
 import { getStorage } from '../storage/localStorage.js';
 import { parseReceipt } from './receiptParser.service.js';
-import { getOffset, type PaginationParams } from '../utils/pagination.js';
+import {
+  getOffset,
+  buildOrderByClause,
+  buildSearchCondition,
+  RECEIPT_SORTABLE_FIELDS,
+  RECEIPT_SEARCHABLE_FIELDS,
+  type PaginationParams,
+} from '../utils/pagination.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -139,17 +146,41 @@ export async function listReceipts(
   await verifyReportOwnership(reportId, userId);
 
   const offset = getOffset(params);
+  const conditions = ['report_id = $1'];
+  const values: unknown[] = [reportId];
+  let paramIndex = 2;
+
+  // Add search condition if provided
+  const searchCondition = buildSearchCondition(
+    params.search,
+    RECEIPT_SEARCHABLE_FIELDS,
+    paramIndex
+  );
+  if (searchCondition) {
+    conditions.push(searchCondition.condition);
+    values.push(searchCondition.value);
+    paramIndex = searchCondition.nextParamIndex;
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  // Build ORDER BY clause with allowed fields, default to created_at DESC
+  const orderBy = buildOrderByClause(
+    params,
+    RECEIPT_SORTABLE_FIELDS,
+    'created_at DESC'
+  );
 
   const [dataResult, countResult] = await Promise.all([
     query<Receipt>(
-      `SELECT * FROM receipts WHERE report_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [reportId, params.limit, offset]
+      `SELECT * FROM receipts WHERE ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      [...values, params.limit, offset]
     ),
     query<{ count: string }>(
-      'SELECT COUNT(*) as count FROM receipts WHERE report_id = $1',
-      [reportId]
+      `SELECT COUNT(*) as count FROM receipts WHERE ${whereClause}`,
+      values
     ),
   ]);
 
@@ -243,7 +274,7 @@ export async function getReceiptAssociations(
      FROM expense_lines el
      JOIN receipt_line_associations rla ON el.id = rla.line_id
      WHERE rla.receipt_id = $1
-     ORDER BY el.expense_date DESC`,
+     ORDER BY el.transaction_date DESC`,
     [receiptId]
   );
 

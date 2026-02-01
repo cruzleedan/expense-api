@@ -17,6 +17,9 @@ export const MessageSchema = z.object({
 export const PaginationQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  search: z.string().max(255).optional().openapi({ example: 'quarterly report', description: 'Search term to filter results' }),
+  sortBy: z.string().optional().openapi({ description: 'Field to sort by (resource-specific allowed values)' }),
+  sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'asc', description: 'Sort direction' }),
 });
 
 export const PaginationMetaSchema = z.object({
@@ -44,6 +47,6 @@ export const AuthHeaderSchema = z.object({
 
 // Timestamps
 export const TimestampFields = {
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 };

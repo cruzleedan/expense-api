@@ -5,12 +5,12 @@ export const ExpenseReportStatusSchema = z.enum(['draft', 'submitted', 'approved
 
 export const ExpenseReportSchema = z.object({
   id: z.string().uuid(),
-  user_id: z.string().uuid(),
+  userId: z.string().uuid(),
   title: z.string(),
   description: z.string().nullable(),
   status: ExpenseReportStatusSchema,
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 }).openapi('ExpenseReport');
 
 export const CreateExpenseReportSchema = z.object({
@@ -24,10 +24,16 @@ export const UpdateExpenseReportSchema = z.object({
   status: ExpenseReportStatusSchema.optional(),
 }).openapi('UpdateExpenseReport');
 
+// Allowed sortBy values for expense reports
+export const ExpenseReportSortBySchema = z.enum(['title', 'status', 'totalAmount', 'createdAt', 'updatedAt', 'submittedAt']);
+
 export const ExpenseReportListQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
   status: ExpenseReportStatusSchema.optional(),
+  search: z.string().max(255).optional().openapi({ example: 'quarterly', description: 'Search in title and description' }),
+  sortBy: ExpenseReportSortBySchema.optional().openapi({ example: 'createdAt', description: 'Field to sort by' }),
+  sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),
 });
 
 export const ExpenseReportListResponseSchema = z.object({

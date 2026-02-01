@@ -18,8 +18,9 @@ import {
   ReceiptListResponseSchema,
   AssociateReceiptSchema,
   ReceiptAssociationsResponseSchema,
+  ReceiptListQuerySchema,
 } from '../schemas/receipt.js';
-import { ErrorSchema, MessageSchema, UuidParamSchema, PaginationQuerySchema, AuthHeaderSchema } from '../schemas/common.js';
+import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
 
 // Router for receipts under reports: /expense-reports/:reportId/receipts
 const receiptsRouter = new OpenAPIHono();
@@ -48,7 +49,7 @@ const listRoute = createRoute({
   description: 'Get paginated list of receipts for a report',
   security,
   request: {
-    query: PaginationQuerySchema,
+    query: ReceiptListQuerySchema,
     headers: AuthHeaderSchema,
   },
   responses: {
@@ -76,9 +77,17 @@ receiptsRouter.openapi(listRoute, async (c) => {
   const reportId = c.req.param('reportId');
   const query = c.req.valid('query');
 
-  const { receipts, total } = await listReceipts(reportId, userId, query);
+  const paginationParams = {
+    page: query.page,
+    limit: query.limit,
+    search: query.search,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+  };
 
-  return c.json(paginate(receipts, total, query), 200);
+  const { receipts, total } = await listReceipts(reportId, userId, paginationParams);
+
+  return c.json(paginate(receipts, total, paginationParams), 200);
 });
 
 // Upload receipt - Note: multipart/form-data doesn't have full OpenAPI schema support in zod-openapi

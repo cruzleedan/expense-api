@@ -53,13 +53,21 @@ expenseReportsRouter.openapi(listRoute, async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
 
+  const paginationParams = {
+    page: query.page,
+    limit: query.limit,
+    search: query.search,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+  };
+
   const { reports, total } = await listExpenseReports(
     userId,
-    { page: query.page, limit: query.limit },
+    paginationParams,
     query.status
   );
 
-  return c.json(paginate(reports, total, { page: query.page, limit: query.limit }), 200);
+  return c.json(paginate(reports, total, paginationParams), 200);
 });
 
 // Create expense report

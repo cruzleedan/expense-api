@@ -13,8 +13,9 @@ import {
   CreateExpenseLineSchema,
   UpdateExpenseLineSchema,
   ExpenseLineListResponseSchema,
+  ExpenseLineListQuerySchema,
 } from '../schemas/expenseLine.js';
-import { ErrorSchema, MessageSchema, UuidParamSchema, ReportIdParamSchema, PaginationQuerySchema, AuthHeaderSchema } from '../schemas/common.js';
+import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
 
 // Router for lines under reports: /expense-reports/:reportId/lines
 const expenseLinesRouter = new OpenAPIHono();
@@ -37,7 +38,7 @@ const listRoute = createRoute({
   description: 'Get paginated list of expense lines for a report',
   security,
   request: {
-    query: PaginationQuerySchema,
+    query: ExpenseLineListQuerySchema,
     headers: AuthHeaderSchema,
   },
   responses: {
@@ -65,9 +66,17 @@ expenseLinesRouter.openapi(listRoute, async (c) => {
   const reportId = c.req.param('reportId');
   const query = c.req.valid('query');
 
-  const { lines, total } = await listExpenseLines(reportId, userId, query);
+  const paginationParams = {
+    page: query.page,
+    limit: query.limit,
+    search: query.search,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+  };
 
-  return c.json(paginate(lines, total, query), 200);
+  const { lines, total } = await listExpenseLines(reportId, userId, paginationParams);
+
+  return c.json(paginate(lines, total, paginationParams), 200);
 });
 
 // Create expense line

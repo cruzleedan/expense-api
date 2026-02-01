@@ -1,4 +1,4 @@
-import type { Context, MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler, ErrorHandler } from 'hono';
 import { AppError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { ZodError } from 'zod';
@@ -11,12 +11,18 @@ interface ErrorResponse {
   };
 }
 
+// Middleware-style error handler (for non-OpenAPI routes)
 export const errorHandler: MiddlewareHandler = async (c, next) => {
   try {
     await next();
   } catch (error) {
     return handleError(c, error);
   }
+};
+
+// Global error handler for Hono's app.onError (catches OpenAPI route errors)
+export const globalErrorHandler: ErrorHandler = (error, c) => {
+  return handleError(c, error);
 };
 
 export function handleError(c: Context, error: unknown): Response {

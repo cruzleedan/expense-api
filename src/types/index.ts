@@ -44,10 +44,22 @@ export interface ExpenseReport {
   workflow_id: string | null;
   workflow_snapshot: WorkflowDefinition | null;
   current_step: number | null;
+  report_date: Date | null;
   submitted_at: Date | null;
   approved_at: Date | null;
   posted_at: Date | null;
   version: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  code: string | null;
+  description: string | null;
+  parent_id: string | null;
+  is_active: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -59,7 +71,8 @@ export interface ExpenseLine {
   amount: string; // DECIMAL comes as string from pg
   currency: string;
   category: string | null;
-  expense_date: Date;
+  category_id: string | null;
+  transaction_date: Date;
   created_at: Date;
   updated_at: Date;
 }

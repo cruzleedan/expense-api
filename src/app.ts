@@ -3,8 +3,9 @@ import { swaggerUI } from '@hono/swagger-ui';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
-import { errorHandler } from './middleware/errorHandler.js';
+import { errorHandler, globalErrorHandler } from './middleware/errorHandler.js';
 import { rateLimit } from './middleware/rateLimit.js';
+import { camelCaseResponse } from './middleware/camelCase.js';
 import { authRouter } from './routes/auth.js';
 import { expenseReportsRouter } from './routes/expenseReports.js';
 import { expenseLinesRouter, expenseLineDirectRouter } from './routes/expenseLines.js';
@@ -12,6 +13,8 @@ import { receiptsRouter, receiptDirectRouter } from './routes/receipts.js';
 import { healthRouter } from './routes/health.js';
 import { rolesRouter } from './routes/roles.js';
 import { workflowRouter } from './routes/workflow.js';
+import { usersRouter } from './routes/users.js';
+import { expenseCategoriesRouter } from './routes/expenseCategories.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -30,45 +33,36 @@ app.use('*', honoLogger((message, ...rest) => {
   logger.debug(message, { details: rest });
 }));
 app.use('*', errorHandler);
+app.use('*', camelCaseResponse);
 
-// Rate limiting for all routes (except health checks)
-app.use('/auth/*', rateLimit());
-app.use('/expense-reports/*', rateLimit());
-app.use('/expense-lines/*', rateLimit());
-app.use('/receipts/*', rateLimit());
-app.use('/roles/*', rateLimit());
-app.use('/workflow/*', rateLimit());
-
-// Health check routes (no rate limiting)
+// Health check routes (no versioning, no rate limiting)
 app.route('/health', healthRouter);
 
-// Auth routes
-app.route('/auth', authRouter);
+// Rate limiting for v1 routes
+app.use('/v1/auth/*', rateLimit());
+app.use('/v1/expense-reports/*', rateLimit());
+app.use('/v1/expense-lines/*', rateLimit());
+app.use('/v1/receipts/*', rateLimit());
+app.use('/v1/roles/*', rateLimit());
+app.use('/v1/workflow/*', rateLimit());
+app.use('/v1/users/*', rateLimit());
+app.use('/v1/expense-categories/*', rateLimit());
 
-// Expense report routes
-app.route('/expense-reports', expenseReportsRouter);
-
-// Nested routes for expense lines under reports
-app.route('/expense-reports/:reportId/lines', expenseLinesRouter);
-
-// Direct expense line routes
-app.route('/expense-lines', expenseLineDirectRouter);
-
-// Nested routes for receipts under reports
-app.route('/expense-reports/:reportId/receipts', receiptsRouter);
-
-// Direct receipt routes
-app.route('/receipts', receiptDirectRouter);
-
-// Role and permission management routes (v3.0)
-app.route('/roles', rolesRouter);
-
-// Workflow and approval routes (v3.0)
-app.route('/workflow', workflowRouter);
+// API v1 routes
+app.route('/v1/auth', authRouter);
+app.route('/v1/expense-reports', expenseReportsRouter);
+app.route('/v1/expense-reports/:reportId/lines', expenseLinesRouter);
+app.route('/v1/expense-lines', expenseLineDirectRouter);
+app.route('/v1/expense-reports/:reportId/receipts', receiptsRouter);
+app.route('/v1/receipts', receiptDirectRouter);
+app.route('/v1/roles', rolesRouter);
+app.route('/v1/workflow', workflowRouter);
+app.route('/v1/users', usersRouter);
+app.route('/v1/expense-categories', expenseCategoriesRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
-  openapi: '3.1.0',
+  openapi: '3.0.0',
   info: {
     title: 'Expense API',
     version: '3.0.0',
@@ -79,8 +73,8 @@ app.doc('/openapi.json', {
   },
   servers: [
     {
-      url: 'http://localhost:3000',
-      description: 'Development server',
+      url: 'http://localhost:3000/v1',
+      description: 'Development server (v1)',
     },
   ],
   tags: [
@@ -94,6 +88,8 @@ app.doc('/openapi.json', {
     { name: 'User Roles', description: 'User role assignment (v3.0)' },
     { name: 'Workflows', description: 'Workflow definitions (v3.0)' },
     { name: 'Report Workflow', description: 'Report approval workflow actions (v3.0)' },
+    { name: 'Users', description: 'User management' },
+    { name: 'Expense Categories', description: 'Expense category management' },
   ],
   security: [{ Bearer: [] }],
   components: {
@@ -109,7 +105,7 @@ app.doc('/openapi.json', {
 });
 
 // Swagger UI
-app.get('/docs', swaggerUI({ url: '/openapi.json' }));
+app.get('/docs', swaggerUI({ url: './openapi.json' }));
 
 // Root route
 app.get('/', (c) => {
@@ -120,6 +116,9 @@ app.get('/', (c) => {
     openapi: '/openapi.json',
   });
 });
+
+// Global error handler (catches errors from OpenAPI routes)
+app.onError(globalErrorHandler);
 
 // 404 handler
 app.notFound((c) => {

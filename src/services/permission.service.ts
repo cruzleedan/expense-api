@@ -7,6 +7,13 @@ import type {
   PermissionCheckResult,
   AuthUser,
 } from '../types';
+import {
+  buildOrderByClause,
+  buildSearchCondition,
+  ROLE_SORTABLE_FIELDS,
+  ROLE_SEARCHABLE_FIELDS,
+  type PaginationParams,
+} from '../utils/pagination';
 
 /**
  * Permission Service
@@ -63,14 +70,65 @@ export async function getPermissionByName(name: string): Promise<Permission | nu
 /**
  * Get all roles
  */
-export async function getAllRoles(): Promise<Role[]> {
-  const result = await db.query<Role>(
-    `SELECT id, name, description, is_system, is_active, created_at, updated_at
-     FROM roles
-     WHERE is_active = true
-     ORDER BY name`
+export async function getAllRoles(params: PaginationParams): Promise<{ roles: Role[], total: number }> {
+  const offset = (params.page - 1) * params.limit;
+  const conditions: string[] = ['r.is_active = true'];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  // Add search condition if provided
+  const searchCondition = buildSearchCondition(
+    params.search,
+    ROLE_SEARCHABLE_FIELDS.map(f => `r.${f}`),
+    paramIndex
   );
-  return result.rows;
+  if (searchCondition) {
+    conditions.push(searchCondition.condition);
+    values.push(searchCondition.value);
+    paramIndex = searchCondition.nextParamIndex;
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  // Get total count
+  const countResult = await db.query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM roles r WHERE ${whereClause}`,
+    values
+  );
+  const total = parseInt(countResult.rows[0].count);
+
+  // Build ORDER BY clause with allowed fields, default to name ASC
+  // Note: permission_count needs special handling since it's an aggregation
+  let orderBy: string;
+  if (params.sortBy === 'permissionCount') {
+    orderBy = `permission_count ${params.sortOrder === 'desc' ? 'DESC' : 'ASC'}`;
+  } else {
+    orderBy = buildOrderByClause(
+      params,
+      // Prefix with 'r.' for role table columns
+      Object.fromEntries(
+        Object.entries(ROLE_SORTABLE_FIELDS)
+          .filter(([key]) => key !== 'permissionCount')
+          .map(([key, value]) => [key, `r.${value}`])
+      ),
+      'r.name ASC'
+    );
+  }
+
+  // Get paginated roles with permission count
+  const result = await db.query<Role & { permission_count: number }>(
+    `SELECT r.id, r.name, r.description, r.is_system, r.is_active, r.created_at, r.updated_at,
+            COUNT(rp.permission_id) as permission_count
+     FROM roles r
+     LEFT JOIN role_permissions rp ON r.id = rp.role_id
+     WHERE ${whereClause}
+     GROUP BY r.id, r.name, r.description, r.is_system, r.is_active, r.created_at, r.updated_at
+     ORDER BY ${orderBy}
+     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+    [...values, params.limit, offset]
+  );
+
+  return { roles: result.rows, total };
 }
 
 /**

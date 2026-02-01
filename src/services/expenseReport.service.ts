@@ -1,16 +1,25 @@
 import { query } from '../db/client.js';
 import type { ExpenseReport } from '../types/index.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
-import { getOffset, type PaginationParams } from '../utils/pagination.js';
+import {
+  getOffset,
+  buildOrderByClause,
+  buildSearchCondition,
+  EXPENSE_REPORT_SORTABLE_FIELDS,
+  EXPENSE_REPORT_SEARCHABLE_FIELDS,
+  type PaginationParams,
+} from '../utils/pagination.js';
 
 export interface CreateExpenseReportInput {
   title: string;
   description?: string;
+  reportDate?: string;
 }
 
 export interface UpdateExpenseReportInput {
   title?: string;
   description?: string;
+  reportDate?: string;
   status?: 'draft' | 'submitted' | 'approved' | 'rejected';
 }
 
@@ -19,10 +28,10 @@ export async function createExpenseReport(
   input: CreateExpenseReportInput
 ): Promise<ExpenseReport> {
   const result = await query<ExpenseReport>(
-    `INSERT INTO expense_reports (user_id, title, description)
-     VALUES ($1, $2, $3)
+    `INSERT INTO expense_reports (user_id, title, description, report_date)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [userId, input.title, input.description ?? null]
+    [userId, input.title, input.description ?? null, input.reportDate ?? null]
   );
 
   return result.rows[0];
@@ -66,12 +75,31 @@ export async function listExpenseReports(
     paramIndex++;
   }
 
+  // Add search condition if provided
+  const searchCondition = buildSearchCondition(
+    params.search,
+    EXPENSE_REPORT_SEARCHABLE_FIELDS,
+    paramIndex
+  );
+  if (searchCondition) {
+    conditions.push(searchCondition.condition);
+    values.push(searchCondition.value);
+    paramIndex = searchCondition.nextParamIndex;
+  }
+
   const whereClause = conditions.join(' AND ');
+
+  // Build ORDER BY clause with allowed fields, default to created_at DESC
+  const orderBy = buildOrderByClause(
+    params,
+    EXPENSE_REPORT_SORTABLE_FIELDS,
+    'created_at DESC'
+  );
 
   const [dataResult, countResult] = await Promise.all([
     query<ExpenseReport>(
       `SELECT * FROM expense_reports WHERE ${whereClause}
-       ORDER BY created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...values, params.limit, offset]
     ),
