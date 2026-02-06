@@ -26,6 +26,14 @@ const envSchema = z.object({
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_FILE_SIZE: z.coerce.number().default(10 * 1024 * 1024), // 10MB
 
+  // S3/R2 Storage
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_BUCKET: z.string().optional(),
+  S3_REGION: z.string().default('auto'),
+  S3_PRESIGNED_URL_EXPIRES: z.coerce.number().default(3600), // 1 hour
+
   // Receipt Parser Service
   RECEIPT_PARSER_URL: z.string().url().default('http://receipt-parser-app:3000'),
   RECEIPT_PARSER_TIMEOUT: z.coerce.number().default(30000), // 30 seconds

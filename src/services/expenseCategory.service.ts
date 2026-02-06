@@ -15,14 +15,22 @@ export interface CreateExpenseCategoryInput {
   code?: string;
   description?: string;
   parentId?: string;
+  // v5.0 LLM fields
+  keywords?: string[];
+  synonyms?: string[];
+  typicalAmountRange?: Record<string, unknown>;
 }
 
 export interface UpdateExpenseCategoryInput {
   name?: string;
   code?: string;
   description?: string;
-  parentId?: string | null;
   isActive?: boolean;
+  parentId?: string | null;
+  // v5.0 LLM fields
+  keywords?: string[];
+  synonyms?: string[];
+  typicalAmountRange?: Record<string, unknown> | null;
 }
 
 export async function createExpenseCategory(
@@ -38,21 +46,19 @@ export async function createExpenseCategory(
     }
   }
 
-  if (input.parentId) {
-    const parent = await query<ExpenseCategory>(
-      'SELECT id FROM expense_categories WHERE id = $1',
-      [input.parentId]
-    );
-    if (parent.rows.length === 0) {
-      throw new NotFoundError('Parent category');
-    }
-  }
-
   const result = await query<ExpenseCategory>(
-    `INSERT INTO expense_categories (name, code, description, parent_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO expense_categories (name, code, description, parent_id, keywords, synonyms, typical_amount_range)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [input.name, input.code ?? null, input.description ?? null, input.parentId ?? null]
+    [
+      input.name,
+      input.code ?? null,
+      input.description ?? null,
+      input.parentId ?? null,
+      input.keywords ?? null,
+      input.synonyms ?? null,
+      input.typicalAmountRange ? JSON.stringify(input.typicalAmountRange) : null
+    ]
   );
 
   return result.rows[0];
@@ -144,19 +150,6 @@ export async function updateExpenseCategory(
     }
   }
 
-  if (input.parentId) {
-    if (input.parentId === categoryId) {
-      throw new ConflictError('Category cannot be its own parent');
-    }
-    const parent = await query<ExpenseCategory>(
-      'SELECT id FROM expense_categories WHERE id = $1',
-      [input.parentId]
-    );
-    if (parent.rows.length === 0) {
-      throw new NotFoundError('Parent category');
-    }
-  }
-
   const updates: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 1;
@@ -179,15 +172,33 @@ export async function updateExpenseCategory(
     paramIndex++;
   }
 
+  if (input.isActive !== undefined) {
+    updates.push(`is_active = $${paramIndex}`);
+    values.push(input.isActive);
+    paramIndex++;
+  }
+
   if (input.parentId !== undefined) {
     updates.push(`parent_id = $${paramIndex}`);
     values.push(input.parentId);
     paramIndex++;
   }
 
-  if (input.isActive !== undefined) {
-    updates.push(`is_active = $${paramIndex}`);
-    values.push(input.isActive);
+  if (input.keywords !== undefined) {
+    updates.push(`keywords = $${paramIndex}`);
+    values.push(input.keywords);
+    paramIndex++;
+  }
+
+  if (input.synonyms !== undefined) {
+    updates.push(`synonyms = $${paramIndex}`);
+    values.push(input.synonyms);
+    paramIndex++;
+  }
+
+  if (input.typicalAmountRange !== undefined) {
+    updates.push(`typical_amount_range = $${paramIndex}`);
+    values.push(input.typicalAmountRange ? JSON.stringify(input.typicalAmountRange) : null);
     paramIndex++;
   }
 

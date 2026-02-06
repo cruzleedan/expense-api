@@ -9,6 +9,10 @@ import {
   removeReceiptLineAssociation,
   getReceiptAssociations,
   getReceiptFile,
+  requestUploadUrl,
+  confirmUpload,
+  getReceiptDownloadUrl,
+  reparseReceiptById,
 } from '../services/receipt.service.js';
 import { paginate } from '../utils/pagination.js';
 import { ValidationError } from '../types/index.js';
@@ -19,6 +23,11 @@ import {
   AssociateReceiptSchema,
   ReceiptAssociationsResponseSchema,
   ReceiptListQuerySchema,
+  RequestUploadUrlSchema,
+  UploadUrlResponseSchema,
+  ConfirmUploadSchema,
+  DownloadUrlResponseSchema,
+  ReparseReceiptResponseSchema,
 } from '../schemas/receipt.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
 
@@ -413,6 +422,248 @@ receiptDirectRouter.openapi(removeAssociationRoute, async (c) => {
   await removeReceiptLineAssociation(id, lineId, userId);
 
   return c.json({ message: 'Association removed' }, 200);
+});
+
+// Request presigned upload URL
+const requestUploadUrlRoute = createRoute({
+  method: 'post',
+  path: '/upload-url',
+  tags: ['Receipts'],
+  summary: 'Request presigned upload URL',
+  description: 'Get a presigned URL for uploading a receipt directly to S3. After uploading, call confirm-upload to create the receipt record.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: {
+      content: { 'application/json': { schema: RequestUploadUrlSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Presigned upload URL',
+      content: { 'application/json': { schema: UploadUrlResponseSchema } },
+    },
+    400: {
+      description: 'Validation error or storage does not support presigned URLs',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Report not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+receiptsRouter.openapi(requestUploadUrlRoute, async (c) => {
+  const userId = getUserId(c);
+  const reportId = c.req.param('reportId');
+  const body = c.req.valid('json');
+
+  const result = await requestUploadUrl(userId, {
+    reportId,
+    fileName: body.fileName,
+    mimeType: body.mimeType,
+    fileSize: body.fileSize,
+  });
+
+  return c.json({
+    uploadUrl: result.uploadUrl,
+    key: result.key,
+    expiresAt: result.expiresAt.toISOString(),
+  }, 200);
+});
+
+// Confirm upload after file has been uploaded to S3
+const confirmUploadRoute = createRoute({
+  method: 'post',
+  path: '/confirm-upload',
+  tags: ['Receipts'],
+  summary: 'Confirm receipt upload',
+  description: 'After uploading a file to S3 using the presigned URL, call this endpoint to create the receipt record.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: {
+      content: { 'application/json': { schema: ConfirmUploadSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Receipt created',
+      content: { 'application/json': { schema: ReceiptUploadResponseSchema } },
+    },
+    400: {
+      description: 'Validation error or file not found in storage',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Report not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    409: {
+      description: 'Duplicate receipt',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+receiptsRouter.openapi(confirmUploadRoute, async (c) => {
+  const userId = getUserId(c);
+  const reportId = c.req.param('reportId');
+  const body = c.req.valid('json');
+
+  const result = await confirmUpload(userId, {
+    reportId,
+    key: body.key,
+    fileName: body.fileName,
+    mimeType: body.mimeType,
+    fileSize: body.fileSize,
+    fileHash: body.fileHash,
+    icr: body.icr,
+  });
+
+  if (body.icr && result.parsedData) {
+    return c.json({
+      receipt: result.receipt,
+      parsedData: result.parsedData,
+    }, 201);
+  }
+
+  return c.json({ receipt: result.receipt }, 201);
+});
+
+// Get presigned download URL
+const getDownloadUrlRoute = createRoute({
+  method: 'get',
+  path: '/{id}/download-url',
+  tags: ['Receipts'],
+  summary: 'Get presigned download URL',
+  description: 'Get a presigned URL for downloading the receipt file directly from S3.',
+  security,
+  request: {
+    params: UuidParamSchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Presigned download URL',
+      content: { 'application/json': { schema: DownloadUrlResponseSchema } },
+    },
+    400: {
+      description: 'Storage does not support presigned URLs',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Receipt not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+receiptDirectRouter.openapi(getDownloadUrlRoute, async (c) => {
+  const userId = getUserId(c);
+  const { id } = c.req.valid('param');
+
+  const result = await getReceiptDownloadUrl(id, userId);
+
+  return c.json({
+    downloadUrl: result.url,
+    fileName: result.fileName,
+    mimeType: result.mimeType,
+    expiresAt: result.expiresAt.toISOString(),
+  }, 200);
+});
+
+// Re-parse receipt with ICR
+const reparseReceiptRoute = createRoute({
+  method: 'get',
+  path: '/{id}/parse',
+  tags: ['Receipts'],
+  summary: 'Re-parse receipt',
+  description: 'Re-process a receipt with ICR to extract updated parsed data.',
+  security,
+  request: {
+    params: UuidParamSchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Receipt parsing result',
+      content: { 'application/json': { schema: ReparseReceiptResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden - not authorized to access this receipt',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Receipt not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    408: {
+      description: 'ICR service timed out',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    422: {
+      description: 'Image quality too low for parsing',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    503: {
+      description: 'ICR service unavailable',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+receiptDirectRouter.openapi(reparseReceiptRoute, async (c) => {
+  const userId = getUserId(c);
+  const { id } = c.req.valid('param');
+
+  const result = await reparseReceiptById(id, userId);
+
+  // Map error codes to appropriate HTTP status codes
+  if (!result.success && result.error) {
+    const statusCodeMap: Record<string, number> = {
+      'PARSE_TIMEOUT': 408,
+      'LOW_QUALITY': 422,
+      'SERVICE_UNAVAILABLE': 503,
+    };
+
+    const statusCode = statusCodeMap[result.error.code] || 200;
+
+    // For service errors, we still return 200 with the error in the body
+    // to maintain consistent response format
+    return c.json(result, 200);
+  }
+
+  return c.json(result, 200);
 });
 
 export { receiptsRouter, receiptDirectRouter };

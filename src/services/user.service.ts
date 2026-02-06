@@ -29,6 +29,9 @@ export interface CreateUserInput {
   departmentId?: string;
   managerId?: string;
   costCenter?: string;
+  // v5.0 fields
+  spendingProfile?: Record<string, unknown>;
+  llmPreferences?: Record<string, unknown>;
 }
 
 export interface UpdateUserInput {
@@ -38,6 +41,9 @@ export interface UpdateUserInput {
   departmentId?: string | null;
   managerId?: string | null;
   costCenter?: string | null;
+  // v5.0 fields
+  spendingProfile?: Record<string, unknown> | null;
+  llmPreferences?: Record<string, unknown> | null;
 }
 
 export interface ListUsersFilters {
@@ -53,7 +59,7 @@ export interface SafeUserWithRoles extends SafeUser {
 }
 
 function toSafeUser(user: User): SafeUser {
-  const { password_hash, oauth_id, roles_version, ...safe } = user;
+  const { password_hash, oauth_id, roles_version, failed_login_attempts, locked_until, ...safe } = user;
   return safe;
 }
 
@@ -104,8 +110,8 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const username = input.username || input.email.split('@')[0];
 
   const result = await query<User>(
-    `INSERT INTO users (email, username, password_hash, department_id, manager_id, cost_center, roles_version, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, 1, true)
+    `INSERT INTO users (email, username, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, true)
      RETURNING *`,
     [
       input.email,
@@ -114,6 +120,8 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
       input.departmentId ?? null,
       input.managerId ?? null,
       input.costCenter ?? null,
+      input.spendingProfile ? JSON.stringify(input.spendingProfile) : '{}',
+      input.llmPreferences ? JSON.stringify(input.llmPreferences) : '{}',
     ]
   );
 
@@ -198,13 +206,15 @@ export async function listUsers(
         department_id,
         manager_id,
         cost_center,
+        spending_profile,
+        llm_preferences,
         CASE
           WHEN is_active then 'active'
           WHEN locked_until > NOW() then 'locked'
           WHEN is_verified = false then 'pending_verification'
         ELSE 'inactive'
         END AS status,
-        locked_until,
+        is_active,
         created_at,
         updated_at
        FROM users ${whereClause}
@@ -300,6 +310,18 @@ export async function updateUser(
   if (input.costCenter !== undefined) {
     updates.push(`cost_center = $${paramIndex}`);
     values.push(input.costCenter);
+    paramIndex++;
+  }
+
+  if (input.spendingProfile !== undefined) {
+    updates.push(`spending_profile = $${paramIndex}`);
+    values.push(input.spendingProfile ? JSON.stringify(input.spendingProfile) : null);
+    paramIndex++;
+  }
+
+  if (input.llmPreferences !== undefined) {
+    updates.push(`llm_preferences = $${paramIndex}`);
+    values.push(input.llmPreferences ? JSON.stringify(input.llmPreferences) : null);
     paramIndex++;
   }
 

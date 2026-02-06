@@ -6,6 +6,7 @@ import {
   listExpenseLines,
   updateExpenseLine,
   deleteExpenseLine,
+  bulkCreateExpenseLines,
 } from '../services/expenseLine.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
@@ -14,6 +15,8 @@ import {
   UpdateExpenseLineSchema,
   ExpenseLineListResponseSchema,
   ExpenseLineListQuerySchema,
+  BulkCreateExpenseLineSchema,
+  BulkCreateExpenseLineResponseSchema,
 } from '../schemas/expenseLine.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
 
@@ -125,6 +128,54 @@ expenseLinesRouter.openapi(createLineRoute, async (c) => {
   const line = await createExpenseLine(reportId, userId, input);
 
   return c.json(line, 201);
+});
+
+// Bulk create expense lines
+const bulkCreateLineRoute = createRoute({
+  method: 'post',
+  path: '/bulk',
+  tags: ['Expense Lines'],
+  summary: 'Bulk create expense lines',
+  description: 'Create multiple expense lines in a single request with optional receipt associations',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: {
+      content: { 'application/json': { schema: BulkCreateExpenseLineSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Expense lines bulk create result',
+      content: { 'application/json': { schema: BulkCreateExpenseLineResponseSchema } },
+    },
+    400: {
+      description: 'Validation error',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Report not found or receipt not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+expenseLinesRouter.openapi(bulkCreateLineRoute, async (c) => {
+  const userId = getUserId(c);
+  const reportId = c.req.param('reportId');
+  const input = c.req.valid('json');
+
+  const result = await bulkCreateExpenseLines(reportId, userId, input.lines);
+
+  return c.json(result, 200);
 });
 
 // Get expense line by ID (direct access)

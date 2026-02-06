@@ -17,6 +17,9 @@ export const UserSchema = z.object({
   departmentId: z.string().uuid().nullable(),
   managerId: z.string().uuid().nullable(),
   costCenter: z.string().nullable(),
+  // v5.0 fields
+  spendingProfile: z.record(z.unknown()).nullable(),
+  llmPreferences: z.record(z.unknown()).nullable(),
   lastLoginAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -33,6 +36,9 @@ export const CreateUserSchema = z.object({
   departmentId: z.string().uuid().optional(),
   managerId: z.string().uuid().optional(),
   costCenter: z.string().max(50).optional(),
+  // v5.0 fields
+  spendingProfile: z.record(z.unknown()).optional().openapi({ example: { avg_monthly: 1500, top_categories: ['Travel', 'Meals'] } }),
+  llmPreferences: z.record(z.unknown()).optional().openapi({ example: { default_currency: 'USD', dashboard_widgets: ['spending_trend'] } }),
 }).openapi('CreateUser');
 
 export const UpdateUserSchema = z.object({
@@ -42,6 +48,9 @@ export const UpdateUserSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   managerId: z.string().uuid().nullable().optional(),
   costCenter: z.string().max(50).nullable().optional(),
+  // v5.0 fields
+  spendingProfile: z.record(z.unknown()).nullable().optional(),
+  llmPreferences: z.record(z.unknown()).nullable().optional(),
 }).openapi('UpdateUser');
 
 // Allowed sortBy values for users

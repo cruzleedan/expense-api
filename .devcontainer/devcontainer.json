@@ -1,0 +1,18 @@
+{
+  "name": "expense-api-dev",
+  "dockerComposeFile": [
+    "../compose.dev.yaml"
+  ],
+  "service": "expense-api",
+  "workspaceFolder": "/app",
+  "remoteUser": "node",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "honojs.vscode"
+      ]
+    }
+  }
+}

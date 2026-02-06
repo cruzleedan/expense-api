@@ -43,6 +43,41 @@ const rolesRouter = new OpenAPIHono();
 // All routes require authentication
 rolesRouter.use('*', authMiddleware);
 
+// IMPORTANT: Register static routes before parameterized routes using standard Hono methods
+// This ensures correct route matching priority
+rolesRouter.get('/permissions', requirePermission('permission.view'), async (c) => {
+  const permissions = await getAllPermissions();
+  return c.json({
+    permissions: permissions.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      category: p.category,
+      riskLevel: p.risk_level,
+      requiresMfa: p.requires_mfa,
+      createdAt: p.created_at.toISOString(),
+    })),
+    total: permissions.length,
+  }, 200);
+});
+
+rolesRouter.get('/permissions/category/:category', requirePermission('permission.view'), async (c) => {
+  const category = c.req.param('category');
+  const permissions = await getPermissionsByCategory(category);
+  return c.json({
+    permissions: permissions.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      category: p.category,
+      riskLevel: p.risk_level,
+      requiresMfa: p.requires_mfa,
+      createdAt: p.created_at.toISOString(),
+    })),
+    total: permissions.length,
+  }, 200);
+});
+
 // ============================================================================
 // ROLE ROUTES
 // ============================================================================
@@ -55,6 +90,7 @@ const listRolesRoute = createRoute({
   summary: 'List all roles',
   description: 'Get a list of all active roles in the system with pagination',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.view')] as const,
   request: {
     query: RoleListQuerySchema,
   },
@@ -75,12 +111,6 @@ const listRolesRoute = createRoute({
 });
 
 rolesRouter.openapi(listRolesRoute, async (c) => {
-  // Get user from JWT
-  const user = c.get('user') as any;
-  if (!user?.permissions?.includes('role.view')) {
-    throw new ForbiddenError('Insufficient permissions');
-  }
-
   const query = c.req.valid('query');
   const paginationParams = {
     page: query.page,
@@ -116,7 +146,13 @@ rolesRouter.openapi(listRolesRoute, async (c) => {
   }, 200);
 });
 
+// ============================================================================
+// ROLE DETAIL ROUTES
+// ============================================================================
+
 // Get role by ID with permissions
+// Note: Using regex pattern to ensure roleId must be a valid UUID format
+// This prevents the route from matching static paths like '/permissions'
 const getRoleRoute = createRoute({
   method: 'get',
   path: '/{roleId}',
@@ -124,6 +160,7 @@ const getRoleRoute = createRoute({
   summary: 'Get role details',
   description: 'Get a role by ID including its assigned permissions',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.view')] as const,
   request: {
     params: RoleIdParamSchema,
   },
@@ -139,7 +176,7 @@ const getRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(getRoleRoute, requirePermission('role.view'), async (c) => {
+rolesRouter.openapi(getRoleRoute, async (c) => {
   const { roleId } = c.req.valid('param');
   const role = await getRoleById(roleId);
 
@@ -168,6 +205,7 @@ const createRoleRoute = createRoute({
   summary: 'Create a new role',
   description: 'Create a new custom role with specified permissions',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.create')] as const,
   request: {
     body: {
       content: { 'application/json': { schema: CreateRoleRequestSchema } },
@@ -189,13 +227,12 @@ const createRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(createRoleRoute, requirePermission('role.create'), async (c) => {
-  const { name, description, permission_ids } = c.req.valid('json');
+rolesRouter.openapi(createRoleRoute, async (c) => {
+  const { name, description, permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
 
   try {
-    const role = await createRole(name, description || null, permission_ids, userId);
-
+    const role = await createRole(name, description || null, permissionIds, userId);
     return c.json({
       ...role,
       created_at: role.created_at.toISOString(),
@@ -217,6 +254,7 @@ const updateRoleRoute = createRoute({
   summary: 'Update role permissions',
   description: 'Update the permissions assigned to a role. System roles cannot be modified.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.edit')] as const,
   request: {
     params: RoleIdParamSchema,
     body: {
@@ -243,9 +281,9 @@ const updateRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(updateRoleRoute, requirePermission('role.edit'), async (c) => {
+rolesRouter.openapi(updateRoleRoute, async (c) => {
   const { roleId } = c.req.valid('param');
-  const { permission_ids } = c.req.valid('json');
+  const { permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
 
   const role = await getRoleById(roleId);
@@ -257,7 +295,7 @@ rolesRouter.openapi(updateRoleRoute, requirePermission('role.edit'), async (c) =
     throw new ForbiddenError('Cannot modify system roles');
   }
 
-  await updateRolePermissions(roleId, permission_ids, userId);
+  await updateRolePermissions(roleId, permissionIds, userId);
 
   return c.json({ message: 'Role updated successfully' }, 200);
 });
@@ -270,6 +308,7 @@ const deleteRoleRoute = createRoute({
   summary: 'Delete a role',
   description: 'Delete a custom role. System roles cannot be deleted.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.delete')] as const,
   request: {
     params: RoleIdParamSchema,
   },
@@ -289,7 +328,7 @@ const deleteRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(deleteRoleRoute, requirePermission('role.delete'), async (c) => {
+rolesRouter.openapi(deleteRoleRoute, async (c) => {
   const { roleId } = c.req.valid('param');
 
   const role = await getRoleById(roleId);
@@ -310,68 +349,6 @@ rolesRouter.openapi(deleteRoleRoute, requirePermission('role.delete'), async (c)
 });
 
 // ============================================================================
-// PERMISSION ROUTES
-// ============================================================================
-
-// List all permissions
-const listPermissionsRoute = createRoute({
-  method: 'get',
-  path: '/permissions',
-  tags: ['Permissions'],
-  summary: 'List all permissions',
-  description: 'Get a list of all permissions in the permission registry',
-  security: [{ bearerAuth: [] }],
-  responses: {
-    200: {
-      description: 'List of permissions',
-      content: { 'application/json': { schema: PermissionListResponseSchema } },
-    },
-  },
-});
-
-rolesRouter.openapi(listPermissionsRoute, requirePermission('permission.view'), async (c) => {
-  const permissions = await getAllPermissions();
-  return c.json({
-    permissions: permissions.map(p => ({
-      ...p,
-      created_at: p.created_at.toISOString(),
-    })),
-    total: permissions.length,
-  }, 200);
-});
-
-// List permissions by category
-const listPermissionsByCategoryRoute = createRoute({
-  method: 'get',
-  path: '/permissions/category/{category}',
-  tags: ['Permissions'],
-  summary: 'List permissions by category',
-  description: 'Get permissions filtered by category (e.g., report, role, user, workflow)',
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: PermissionCategoryParamSchema,
-  },
-  responses: {
-    200: {
-      description: 'List of permissions',
-      content: { 'application/json': { schema: PermissionListResponseSchema } },
-    },
-  },
-});
-
-rolesRouter.openapi(listPermissionsByCategoryRoute, requirePermission('permission.view'), async (c) => {
-  const { category } = c.req.valid('param');
-  const permissions = await getPermissionsByCategory(category);
-  return c.json({
-    permissions: permissions.map(p => ({
-      ...p,
-      created_at: p.created_at.toISOString(),
-    })),
-    total: permissions.length,
-  }, 200);
-});
-
-// ============================================================================
 // USER ROLE ASSIGNMENT ROUTES
 // ============================================================================
 
@@ -383,6 +360,7 @@ const getUserRolesRoute = createRoute({
   summary: 'Get user roles',
   description: 'Get all roles assigned to a user',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.view')] as const,
   request: {
     params: UserIdParamSchema,
   },
@@ -398,7 +376,7 @@ const getUserRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(getUserRolesRoute, requirePermission('role.view'), async (c) => {
+rolesRouter.openapi(getUserRolesRoute, async (c) => {
   const { userId } = c.req.valid('param');
   const roles = await getUserRoles(userId);
 
@@ -420,6 +398,7 @@ const setUserRolesRoute = createRoute({
   summary: 'Set user roles',
   description: 'Replace all roles for a user. Validates SoD rules before assignment.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UserIdParamSchema,
     body: {
@@ -442,7 +421,7 @@ const setUserRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(setUserRolesRoute, requirePermission('role.assign'), async (c) => {
+rolesRouter.openapi(setUserRolesRoute, async (c) => {
   const { userId } = c.req.valid('param');
   const { role_ids } = c.req.valid('json');
   const adminId = getUserId(c);
@@ -479,6 +458,7 @@ const addUserRoleRoute = createRoute({
   summary: 'Add role to user',
   description: 'Add a single role to a user. Validates SoD rules before assignment.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UserIdParamSchema,
     body: {
@@ -497,7 +477,7 @@ const addUserRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(addUserRoleRoute, requirePermission('role.assign'), async (c) => {
+rolesRouter.openapi(addUserRoleRoute, async (c) => {
   const { userId } = c.req.valid('param');
   const { role_id } = c.req.valid('json');
   const adminId = getUserId(c);
@@ -535,6 +515,7 @@ const removeUserRoleRoute = createRoute({
   summary: 'Remove role from user',
   description: 'Remove a role from a user',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UserIdParamSchema.merge(RoleIdParamSchema),
   },
@@ -546,7 +527,7 @@ const removeUserRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(removeUserRoleRoute, requirePermission('role.assign'), async (c) => {
+rolesRouter.openapi(removeUserRoleRoute, async (c) => {
   const { userId, roleId } = c.req.valid('param');
 
   await removeRoleFromUser(userId, roleId);
@@ -562,6 +543,7 @@ const validateUserSodRoute = createRoute({
   summary: 'Validate user SoD',
   description: 'Check if a user\'s current permissions violate any Separation of Duties rules',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('role.view')] as const,
   request: {
     params: UserIdParamSchema,
   },
@@ -573,7 +555,7 @@ const validateUserSodRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(validateUserSodRoute, requirePermission('role.view'), async (c) => {
+rolesRouter.openapi(validateUserSodRoute, async (c) => {
   const { userId } = c.req.valid('param');
   const result = await validateUserSod(userId);
   return c.json(result, 200);

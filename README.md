@@ -254,6 +254,11 @@ npm run start    # Start production server
 npm run db:init  # Initialize database schema
 ```
 
+## Dev Container Setup
+```bash
+git config --global credential.helper '!/usr/bin/env code --hub-credential-helper'
+```
+
 ## License
 
 MIT

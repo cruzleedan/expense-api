@@ -1,17 +1,22 @@
 import { db } from '../db/client';
 import type {
   Permission,
+  PermissionRiskLevel,
   Role,
   SodRule,
   SodValidationResult,
   PermissionCheckResult,
   AuthUser,
 } from '../types';
+import { NotFoundError, ConflictError } from '../types';
 import {
   buildOrderByClause,
   buildSearchCondition,
+  getOffset,
   ROLE_SORTABLE_FIELDS,
   ROLE_SEARCHABLE_FIELDS,
+  PERMISSION_SORTABLE_FIELDS,
+  PERMISSION_SEARCHABLE_FIELDS,
   type PaginationParams,
 } from '../utils/pagination';
 
@@ -61,6 +66,203 @@ export async function getPermissionByName(name: string): Promise<Permission | nu
     [name]
   );
   return result.rows[0] || null;
+}
+
+/**
+ * Get a permission by ID
+ */
+export async function getPermissionById(id: string): Promise<Permission | null> {
+  const result = await db.query<Permission>(
+    `SELECT id, name, description, category, risk_level, requires_mfa, created_at
+     FROM permissions
+     WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * List permissions with pagination, filtering, and search
+ */
+export interface ListPermissionsParams extends PaginationParams {
+  category?: string;
+  riskLevel?: PermissionRiskLevel;
+}
+
+export async function listPermissions(
+  params: ListPermissionsParams
+): Promise<{ permissions: Permission[]; total: number }> {
+  const offset = getOffset(params);
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  // Filter by category
+  if (params.category) {
+    conditions.push(`category = $${paramIndex}`);
+    values.push(params.category);
+    paramIndex++;
+  }
+
+  // Filter by risk level
+  if (params.riskLevel) {
+    conditions.push(`risk_level = $${paramIndex}`);
+    values.push(params.riskLevel);
+    paramIndex++;
+  }
+
+  // Add search condition
+  const searchCondition = buildSearchCondition(
+    params.search,
+    PERMISSION_SEARCHABLE_FIELDS,
+    paramIndex
+  );
+  if (searchCondition) {
+    conditions.push(searchCondition.condition);
+    values.push(searchCondition.value);
+    paramIndex = searchCondition.nextParamIndex;
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderBy = buildOrderByClause(params, PERMISSION_SORTABLE_FIELDS, 'category ASC, name ASC');
+
+  const [dataResult, countResult] = await Promise.all([
+    db.query<Permission>(
+      `SELECT id, name, description, category, risk_level, requires_mfa, created_at
+       FROM permissions ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      [...values, params.limit, offset]
+    ),
+    db.query<{ count: string }>(
+      `SELECT COUNT(*) as count FROM permissions ${whereClause}`,
+      values
+    ),
+  ]);
+
+  return {
+    permissions: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
+}
+
+/**
+ * Create a new permission
+ */
+export interface CreatePermissionInput {
+  name: string;
+  description?: string;
+  category?: string;
+  riskLevel?: PermissionRiskLevel;
+  requiresMfa?: boolean;
+}
+
+export async function createPermission(input: CreatePermissionInput): Promise<Permission> {
+  // Check for duplicate name
+  const existing = await getPermissionByName(input.name);
+  if (existing) {
+    throw new ConflictError(`Permission with name "${input.name}" already exists`);
+  }
+
+  const result = await db.query<Permission>(
+    `INSERT INTO permissions (name, description, category, risk_level, requires_mfa)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, name, description, category, risk_level, requires_mfa, created_at`,
+    [
+      input.name,
+      input.description ?? null,
+      input.category ?? null,
+      input.riskLevel ?? null,
+      input.requiresMfa ?? false,
+    ]
+  );
+
+  return result.rows[0];
+}
+
+/**
+ * Update an existing permission
+ */
+export interface UpdatePermissionInput {
+  description?: string;
+  category?: string;
+  riskLevel?: PermissionRiskLevel | null;
+  requiresMfa?: boolean;
+}
+
+export async function updatePermission(
+  permissionId: string,
+  input: UpdatePermissionInput
+): Promise<Permission> {
+  const existing = await getPermissionById(permissionId);
+  if (!existing) {
+    throw new NotFoundError('Permission');
+  }
+
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (input.description !== undefined) {
+    updates.push(`description = $${paramIndex}`);
+    values.push(input.description);
+    paramIndex++;
+  }
+
+  if (input.category !== undefined) {
+    updates.push(`category = $${paramIndex}`);
+    values.push(input.category);
+    paramIndex++;
+  }
+
+  if (input.riskLevel !== undefined) {
+    updates.push(`risk_level = $${paramIndex}`);
+    values.push(input.riskLevel);
+    paramIndex++;
+  }
+
+  if (input.requiresMfa !== undefined) {
+    updates.push(`requires_mfa = $${paramIndex}`);
+    values.push(input.requiresMfa);
+    paramIndex++;
+  }
+
+  if (updates.length === 0) {
+    return existing;
+  }
+
+  values.push(permissionId);
+
+  const result = await db.query<Permission>(
+    `UPDATE permissions SET ${updates.join(', ')}
+     WHERE id = $${paramIndex}
+     RETURNING id, name, description, category, risk_level, requires_mfa, created_at`,
+    values
+  );
+
+  return result.rows[0];
+}
+
+/**
+ * Delete a permission
+ */
+export async function deletePermission(permissionId: string): Promise<void> {
+  const existing = await getPermissionById(permissionId);
+  if (!existing) {
+    throw new NotFoundError('Permission');
+  }
+
+  // Check if permission is assigned to any roles
+  const roleCount = await db.query<{ count: string }>(
+    'SELECT COUNT(*) as count FROM role_permissions WHERE permission_id = $1',
+    [permissionId]
+  );
+
+  if (parseInt(roleCount.rows[0].count, 10) > 0) {
+    throw new ConflictError('Cannot delete permission that is assigned to roles');
+  }
+
+  await db.query('DELETE FROM permissions WHERE id = $1', [permissionId]);
 }
 
 // ============================================================================

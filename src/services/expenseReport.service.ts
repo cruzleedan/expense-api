@@ -9,11 +9,20 @@ import {
   EXPENSE_REPORT_SEARCHABLE_FIELDS,
   type PaginationParams,
 } from '../utils/pagination.js';
+import { buildUpdateFields } from '../utils/caseTransform.js';
 
 export interface CreateExpenseReportInput {
   title: string;
   description?: string;
   reportDate?: string;
+  totalAmount?: number;
+  netAmount?: number;
+  currency?: string;
+  // v5.0 fields
+  projectId?: string;
+  projectName?: string;
+  clientName?: string;
+  tags?: string[];
 }
 
 export interface UpdateExpenseReportInput {
@@ -21,6 +30,14 @@ export interface UpdateExpenseReportInput {
   description?: string;
   reportDate?: string;
   status?: 'draft' | 'submitted' | 'approved' | 'rejected';
+  totalAmount?: number;
+  netAmount?: number;
+  currency?: string;
+  // v5.0 fields
+  projectId?: string;
+  projectName?: string;
+  clientName?: string;
+  tags?: string[];
 }
 
 export async function createExpenseReport(
@@ -28,10 +45,34 @@ export async function createExpenseReport(
   input: CreateExpenseReportInput
 ): Promise<ExpenseReport> {
   const result = await query<ExpenseReport>(
-    `INSERT INTO expense_reports (user_id, title, description, report_date)
-     VALUES ($1, $2, $3, $4)
-     RETURNING *`,
-    [userId, input.title, input.description ?? null, input.reportDate ?? null]
+    `INSERT INTO expense_reports (
+      user_id,
+      title,
+      description,
+      report_date,
+      total_amount,
+      net_amount,
+      currency,
+      project_id,
+      project_name,
+      client_name,
+      tags
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    RETURNING *`,
+    [
+      userId,
+      input.title,
+      input.description ?? null,
+      input.reportDate ?? null,
+      input.totalAmount ?? 0,
+      input.netAmount ?? 0,
+      input.currency ?? null,
+      input.projectId ?? null,
+      input.projectName ?? null,
+      input.clientName ?? null,
+      input.tags ?? null
+    ]
   );
 
   return result.rows[0];
@@ -42,7 +83,32 @@ export async function getExpenseReportById(
   userId: string
 ): Promise<ExpenseReport> {
   const result = await query<ExpenseReport>(
-    'SELECT * FROM expense_reports WHERE id = $1',
+    `SELECT
+      id,
+      user_id,
+      title,
+      description,
+      status,
+      department_id,
+      cost_center,
+      project_id,
+      project_name,
+      client_name,
+      tags,
+      total_amount,
+      currency,
+      workflow_id,
+      workflow_snapshot,
+      current_step,
+      TO_CHAR(report_date, 'YYYY-MM-DD') AS report_date,
+      submitted_at,
+      approved_at,
+      posted_at,
+      version,
+      created_at,
+      updated_at
+    FROM expense_reports
+    WHERE id = $1`,
     [reportId]
   );
 
@@ -123,27 +189,21 @@ export async function updateExpenseReport(
   // First check ownership
   await getExpenseReportById(reportId, userId);
 
-  const updates: string[] = [];
-  const values: unknown[] = [];
-  let paramIndex = 1;
+  const fieldMap = {
+    title: 'title',
+    description: 'description',
+    status: 'status',
+    reportDate: 'report_date',
+    totalAmount: 'total_amount',
+    netAmount: 'net_amount',
+    currency: 'currency',
+    projectId: 'project_id',
+    projectName: 'project_name',
+    clientName: 'client_name',
+    tags: 'tags',
+  } as const;
 
-  if (input.title !== undefined) {
-    updates.push(`title = $${paramIndex}`);
-    values.push(input.title);
-    paramIndex++;
-  }
-
-  if (input.description !== undefined) {
-    updates.push(`description = $${paramIndex}`);
-    values.push(input.description);
-    paramIndex++;
-  }
-
-  if (input.status !== undefined) {
-    updates.push(`status = $${paramIndex}`);
-    values.push(input.status);
-    paramIndex++;
-  }
+  const { updates, values, nextIndex } = buildUpdateFields(input, fieldMap);
 
   if (updates.length === 0) {
     return getExpenseReportById(reportId, userId);
@@ -153,7 +213,7 @@ export async function updateExpenseReport(
 
   const result = await query<ExpenseReport>(
     `UPDATE expense_reports SET ${updates.join(', ')}
-     WHERE id = $${paramIndex}
+     WHERE id = $${nextIndex}
      RETURNING *`,
     values
   );

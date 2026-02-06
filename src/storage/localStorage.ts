@@ -5,6 +5,7 @@ import type { StorageProvider } from './storage.interface.js';
 import { env } from '../config/env.js';
 import { NotFoundError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { S3StorageProvider } from './s3Storage.js';
 
 export class LocalStorageProvider implements StorageProvider {
   private baseDir: string;
@@ -76,6 +77,10 @@ export class LocalStorageProvider implements StorageProvider {
     return `/files/${path}`;
   }
 
+  supportsPresignedUrls(): boolean {
+    return false;
+  }
+
   private sanitizeFilename(filename: string): string {
     // Remove path separators and limit length
     return filename
@@ -90,7 +95,14 @@ let storageInstance: StorageProvider | null = null;
 
 export function getStorage(): StorageProvider {
   if (!storageInstance) {
-    storageInstance = new LocalStorageProvider();
+    // Use S3 storage if configured, otherwise fall back to local storage
+    if (env.S3_ENDPOINT && env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY && env.S3_BUCKET) {
+      storageInstance = new S3StorageProvider();
+      logger.info('Using S3 storage provider');
+    } else {
+      storageInstance = new LocalStorageProvider();
+      logger.info('Using local storage provider');
+    }
   }
   return storageInstance;
 }

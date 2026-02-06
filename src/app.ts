@@ -15,6 +15,10 @@ import { rolesRouter } from './routes/roles.js';
 import { workflowRouter } from './routes/workflow.js';
 import { usersRouter } from './routes/users.js';
 import { expenseCategoriesRouter } from './routes/expenseCategories.js';
+import { permissionsRouter } from './routes/permissions.js';
+import { projectsRouter } from './routes/projects.js';
+import { expensePoliciesRouter } from './routes/expensePolicies.js';
+import { llmPromptTemplatesRouter } from './routes/llmPromptTemplates.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -47,6 +51,10 @@ app.use('/v1/roles/*', rateLimit());
 app.use('/v1/workflow/*', rateLimit());
 app.use('/v1/users/*', rateLimit());
 app.use('/v1/expense-categories/*', rateLimit());
+app.use('/v1/permissions/*', rateLimit());
+app.use('/v1/projects/*', rateLimit());
+app.use('/v1/expense-policies/*', rateLimit());
+app.use('/v1/llm-prompt-templates/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -59,6 +67,10 @@ app.route('/v1/roles', rolesRouter);
 app.route('/v1/workflow', workflowRouter);
 app.route('/v1/users', usersRouter);
 app.route('/v1/expense-categories', expenseCategoriesRouter);
+app.route('/v1/permissions', permissionsRouter);
+app.route('/v1/projects', projectsRouter);
+app.route('/v1/expense-policies', expensePoliciesRouter);
+app.route('/v1/llm-prompt-templates', llmPromptTemplatesRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
@@ -90,6 +102,9 @@ app.doc('/openapi.json', {
     { name: 'Report Workflow', description: 'Report approval workflow actions (v3.0)' },
     { name: 'Users', description: 'User management' },
     { name: 'Expense Categories', description: 'Expense category management' },
+    { name: 'Projects', description: 'Project and client management (v5.0)' },
+    { name: 'Expense Policies', description: 'Expense policy rules and enforcement (v5.0)' },
+    { name: 'LLM Prompt Templates', description: 'LLM prompt template management (v5.0)' },
   ],
   security: [{ Bearer: [] }],
   components: {

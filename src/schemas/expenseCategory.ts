@@ -6,8 +6,12 @@ export const ExpenseCategorySchema = z.object({
   name: z.string(),
   code: z.string().nullable(),
   description: z.string().nullable(),
-  parentId: z.string().uuid().nullable(),
   isActive: z.boolean(),
+  // v5.0 fields
+  parentId: z.string().uuid().nullable(),
+  keywords: z.array(z.string()).nullable(),
+  synonyms: z.array(z.string()).nullable(),
+  typicalAmountRange: z.record(z.unknown()).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).openapi('ExpenseCategory');
@@ -16,15 +20,23 @@ export const CreateExpenseCategorySchema = z.object({
   name: z.string().min(1).max(100).openapi({ example: 'Travel' }),
   code: z.string().min(1).max(50).optional().openapi({ example: 'TRAVEL' }),
   description: z.string().max(1000).optional().openapi({ example: 'Travel and transportation expenses' }),
-  parentId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+  // v5.0 fields
+  parentId: z.string().uuid().optional().openapi({ example: '00000000-0000-4000-b001-000000000001' }),
+  keywords: z.array(z.string().max(50)).max(50).optional().openapi({ example: ['flight', 'hotel', 'car rental'] }),
+  synonyms: z.array(z.string().max(100)).max(20).optional().openapi({ example: ['business travel', 'trip'] }),
+  typicalAmountRange: z.record(z.unknown()).optional().openapi({ example: { min: 50, max: 2000, median: 500 } }),
 }).openapi('CreateExpenseCategory');
 
 export const UpdateExpenseCategorySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   code: z.string().min(1).max(50).optional(),
   description: z.string().max(1000).optional(),
-  parentId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().optional(),
+  // v5.0 fields
+  parentId: z.string().uuid().nullable().optional(),
+  keywords: z.array(z.string().max(50)).max(50).nullable().optional(),
+  synonyms: z.array(z.string().max(100)).max(20).nullable().optional(),
+  typicalAmountRange: z.record(z.unknown()).nullable().optional(),
 }).openapi('UpdateExpenseCategory');
 
 // Allowed sortBy values for expense categories

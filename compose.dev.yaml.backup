@@ -2,7 +2,7 @@ services:
   expense-api:
     build:
       context: .
-      dockerfile: Dockerfile.dev # Use the new Debian file for development
+      dockerfile: Dockerfile
       target: development
     container_name: expense-api
     ports:
@@ -17,8 +17,9 @@ services:
       - UPLOAD_DIR=/app/uploads
       - RECEIPT_PARSER_URL=http://receipt-parser-app:8000
     volumes:
-      - .:/app
-      - /app/node_modules # Prevent overwriting node_modules
+      - ./src:/app/src:ro #ro means read-only, we want to allow write access for development
+      - ./package.json:/app/package.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
       - uploads_data:/app/uploads
     depends_on:
       postgres:

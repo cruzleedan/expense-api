@@ -69,6 +69,13 @@ export const RECEIPT_SORTABLE_FIELDS: SortableFieldsConfig = {
   createdAt: 'created_at',
 };
 
+export const PERMISSION_SORTABLE_FIELDS: SortableFieldsConfig = {
+  name: 'name',
+  category: 'category',
+  riskLevel: 'risk_level',
+  createdAt: 'created_at',
+};
+
 // Searchable fields configuration for each resource
 // These are the database columns that will be searched with ILIKE
 export const EXPENSE_REPORT_SEARCHABLE_FIELDS = ['title', 'description'];
@@ -77,6 +84,7 @@ export const EXPENSE_CATEGORY_SEARCHABLE_FIELDS = ['name', 'code', 'description'
 export const ROLE_SEARCHABLE_FIELDS = ['name', 'description'];
 export const EXPENSE_LINE_SEARCHABLE_FIELDS = ['description', 'category'];
 export const RECEIPT_SEARCHABLE_FIELDS = ['file_name'];
+export const PERMISSION_SEARCHABLE_FIELDS = ['name', 'description'];
 
 /**
  * Validates and resolves a sort field alias to its database column name.

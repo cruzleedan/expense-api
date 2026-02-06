@@ -2,7 +2,11 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
-const { Pool } = pg;
+const { Pool, types } = pg;
+
+// Parse NUMERIC/DECIMAL as floats instead of strings
+// OID 1700 = NUMERIC type in PostgreSQL
+types.setTypeParser(1700, (val) => parseFloat(val));
 
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,

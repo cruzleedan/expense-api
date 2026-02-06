@@ -5,26 +5,35 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --inspect=0.0.0.0:9229 src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "db:init": "psql $DATABASE_URL -f src/db/schema.sql"
+    "db:init": "psql $DATABASE_URL -f src/db/schema.sql -f src/db/seed-users.sql"
   },
-  "keywords": ["expense", "api", "hono", "typescript"],
+  "keywords": [
+    "expense",
+    "api",
+    "hono",
+    "typescript"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.712.0",
+    "@aws-sdk/s3-request-presigner": "^3.712.0",
     "@hono/node-server": "^1.13.7",
     "@hono/swagger-ui": "^0.4.1",
     "@hono/zod-openapi": "^0.18.3",
     "hono": "^4.6.14",
     "jose": "^5.9.6",
     "pg": "^8.13.1",
+    "sharp": "^0.33.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/pg": "^8.11.10",
+    "@types/sharp": "^0.32.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },

@@ -11,6 +11,7 @@ export const ReceiptSchema = z.object({
   mimeType: z.string(),
   fileSize: z.number(),
   parsedData: z.record(z.unknown()).nullable(),
+  thumbnailUrl: z.string().url().optional().openapi({ description: 'Thumbnail URL for image receipts' }),
   createdAt: z.string().datetime(),
 }).openapi('Receipt');
 
@@ -54,3 +55,48 @@ export const AssociateReceiptSchema = z.object({
 export const ReceiptAssociationsResponseSchema = z.object({
   lines: z.array(ExpenseLineSchema),
 }).openapi('ReceiptAssociations');
+
+// Presigned URL schemas for S3 upload/download
+export const RequestUploadUrlSchema = z.object({
+  fileName: z.string().min(1).max(255).openapi({ example: 'receipt.pdf', description: 'Original file name' }),
+  mimeType: z.string().openapi({ example: 'application/pdf', description: 'MIME type of the file' }),
+  fileSize: z.number().int().positive().openapi({ example: 1024000, description: 'File size in bytes' }),
+}).openapi('RequestUploadUrl');
+
+export const UploadUrlResponseSchema = z.object({
+  uploadUrl: z.string().url().openapi({ description: 'Presigned URL for uploading the file via PUT request' }),
+  key: z.string().openapi({ description: 'Storage key to use when confirming the upload' }),
+  expiresAt: z.string().datetime().openapi({ description: 'When the presigned URL expires' }),
+}).openapi('UploadUrlResponse');
+
+export const ConfirmUploadSchema = z.object({
+  key: z.string().openapi({ description: 'Storage key returned from upload URL request' }),
+  fileName: z.string().min(1).max(255).openapi({ example: 'receipt.pdf', description: 'Original file name' }),
+  mimeType: z.string().openapi({ example: 'application/pdf', description: 'MIME type of the file' }),
+  fileSize: z.number().int().positive().openapi({ example: 1024000, description: 'File size in bytes' }),
+  fileHash: z.string().length(64).openapi({ description: 'SHA-256 hash of the file for deduplication' }),
+  icr: z.boolean().optional().openapi({ description: 'Enable receipt parsing (ICR)' }),
+}).openapi('ConfirmUpload');
+
+export const DownloadUrlResponseSchema = z.object({
+  downloadUrl: z.string().url().openapi({ description: 'Presigned URL for downloading the file' }),
+  fileName: z.string().openapi({ description: 'Original file name' }),
+  mimeType: z.string().openapi({ description: 'MIME type of the file' }),
+  expiresAt: z.string().datetime().openapi({ description: 'When the presigned URL expires' }),
+}).openapi('DownloadUrlResponse');
+
+// Re-parse receipt schemas
+export const ReparseErrorSchema = z.object({
+  code: z.string().openapi({
+    example: 'PARSE_TIMEOUT',
+    description: 'Error code: PARSE_FAILED, PARSE_TIMEOUT, SERVICE_UNAVAILABLE, LOW_QUALITY, etc.'
+  }),
+  message: z.string().openapi({ example: 'Receipt parsing timed out' }),
+}).openapi('ReparseError');
+
+export const ReparseReceiptResponseSchema = z.object({
+  success: z.boolean().openapi({ description: 'Whether parsing was successful' }),
+  data: ParsedReceiptDataSchema.optional().openapi({ description: 'Parsed receipt data (if successful)' }),
+  error: ReparseErrorSchema.optional().openapi({ description: 'Error details (if failed)' }),
+  processingTimeMs: z.number().openapi({ description: 'Processing time in milliseconds', example: 1234 }),
+}).openapi('ReparseReceiptResponse');

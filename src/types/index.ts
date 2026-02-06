@@ -13,6 +13,9 @@ export interface User {
   department_id: string | null;
   manager_id: string | null;
   cost_center: string | null;
+  // v5.0 LLM fields
+  spending_profile: Record<string, unknown> | null;
+  llm_preferences: Record<string, unknown> | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -39,7 +42,13 @@ export interface ExpenseReport {
   status: ExpenseReportStatus;
   department_id: string | null;
   cost_center: string | null;
-  total_amount: string | null;
+  // v5.0 project/client fields
+  project_id: string | null;
+  project_name: string | null;
+  client_name: string | null;
+  tags: string[] | null;
+  total_amount: number;
+  net_amount: number;
   currency: string;
   workflow_id: string | null;
   workflow_snapshot: WorkflowDefinition | null;
@@ -59,6 +68,12 @@ export interface ExpenseCategory {
   code: string | null;
   description: string | null;
   parent_id: string | null;
+  level: number;
+  full_path: string | null;
+  // v5.0 LLM fields
+  keywords: string[] | null;
+  synonyms: string[] | null;
+  typical_amount_range: Record<string, unknown> | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -70,9 +85,28 @@ export interface ExpenseLine {
   description: string;
   amount: string; // DECIMAL comes as string from pg
   currency: string;
-  category: string | null;
+  category_code: string | null;
   category_id: string | null;
+  category: string | null;
+  category_path: string | null;
   transaction_date: Date;
+  merchant_name: string | null;
+  merchant_category: string | null;
+  location_city: string | null;
+  location_country: string | null;
+  // v5.0 fields
+  payment_method: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  client_name: string | null;
+  tags: string[] | null;
+  is_recurring: boolean;
+  recurrence_group_id: string | null;
+  recurrence_pattern: string | null;
+  recurrence_merchant: string | null;
+  is_anomaly: boolean;
+  anomaly_score: number | null;
+  anomaly_reasons: string[] | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -86,6 +120,7 @@ export interface Receipt {
   mime_type: string;
   file_size: number;
   parsed_data: Record<string, unknown> | null;
+  thumbnail_path: string | null;
   created_at: Date;
 }
 
@@ -110,14 +145,34 @@ export interface AuthTokens {
 
 export interface ParsedReceiptData {
   vendor?: string;
+  merchant_name?: string;
+  merchant_address?: string;
+  merchant_phone?: string;
   date?: string;
+  time?: string;
   total?: number;
+  subtotal?: number;
+  tax?: number;
+  tip?: number;
+  discount?: number;
   currency?: string;
+  payment_method?: string;
+  receipt_number?: string;
   items?: Array<{
     description: string;
+    name?: string;
+    quantity?: number;
+    unit_price?: number;
+    total_price?: number;
     amount: number;
   }>;
   raw_text?: string;
+  processing_metadata?: {
+    ocr_time_ms: number;
+    llm_time_ms: number;
+    total_time_ms: number;
+    ocr_confidence: number;
+  };
 }
 
 export class AppError extends Error {
