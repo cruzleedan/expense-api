@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS projects (
     -- LLM: Searchable fields
     tags TEXT[],  -- ['q4-launch', 'high-priority', 'billable']
     full_path TEXT,  -- 'Acme Corp > Project Alpha' (for LLM context)
-    name_embedding vector(1536),
+    name_embedding vector(768),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     -- LLM: Natural language summary (can be AI-generated)
     ai_summary TEXT,  -- "Business trip to NYC with 5 meals and 2 hotel nights"
     -- LLM: Semantic search
-    content_embedding vector(1536),
+    content_embedding vector(768),
     version INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS expense_categories (
     synonyms TEXT[],  -- Alternative names for fuzzy matching
     typical_amount_range JSONB,  -- {"min": 50, "max": 500, "currency": "USD"}
     -- Embedding for semantic search
-    name_embedding vector(1536),  -- OpenAI ada-002 / text-embedding-3-small dimension
+    name_embedding vector(768),  -- nomic-embed-text dimension
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS expense_lines (
     recurrence_pattern VARCHAR(50),  -- 'monthly', 'weekly', 'quarterly', 'annual'
     recurrence_merchant VARCHAR(255),  -- Normalized merchant for recurrence matching
     -- LLM: Semantic search embedding
-    description_embedding vector(1536),
+    description_embedding vector(768),
     -- LLM: Full-text search
     search_vector tsvector GENERATED ALWAYS AS (
         setweight(to_tsvector('english', COALESCE(description, '')), 'A') ||
@@ -387,7 +387,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     ocr_text TEXT,
     ocr_confidence DECIMAL(5,4),  -- 0.0000 to 1.0000
     -- LLM: Semantic search on receipt content
-    content_embedding vector(1536),
+    content_embedding vector(768),
     -- LLM: Full-text search
     search_vector tsvector GENERATED ALWAYS AS (
         to_tsvector('english', COALESCE(ocr_text, '') || ' ' || COALESCE(extracted_merchant, ''))
@@ -530,7 +530,7 @@ CREATE TABLE IF NOT EXISTS expense_insights (
     generated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     generated_by VARCHAR(100) DEFAULT 'system',  -- 'system', 'gpt-4', 'claude-3', etc.
     -- Embedding for similar insight search
-    content_embedding vector(1536)
+    content_embedding vector(768)
 );
 
 -- LLM query/conversation history
@@ -540,7 +540,7 @@ CREATE TABLE IF NOT EXISTS llm_queries (
     session_id UUID,  -- Group related queries
     -- Query details
     query_text TEXT NOT NULL,  -- "Show me all travel expenses over $500 last month"
-    query_embedding vector(1536),
+    query_embedding vector(768),
     -- Query interpretation
     parsed_intent JSONB,  -- {"action": "search", "filters": {"category": "Travel", "amount_min": 500}}
     generated_sql TEXT,  -- The SQL query generated
@@ -568,7 +568,7 @@ CREATE TABLE IF NOT EXISTS merchants (
     merchant_type VARCHAR(100),  -- 'hotel', 'airline', 'restaurant', 'gas_station'
     typical_amount_range JSONB,  -- {"min": 100, "max": 400}
     -- LLM: Embedding for fuzzy matching
-    name_embedding vector(1536),
+    name_embedding vector(768),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(raw_name)
 );
@@ -1125,7 +1125,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function to search expenses by semantic similarity
 CREATE OR REPLACE FUNCTION semantic_expense_search(
-    query_embedding vector(1536),
+    query_embedding vector(768),
     limit_count INTEGER DEFAULT 10,
     user_id_filter UUID DEFAULT NULL,
     category_filter VARCHAR DEFAULT NULL,
@@ -1773,6 +1773,19 @@ INSERT INTO llm_prompt_templates (name, description, system_prompt, user_prompt_
 ('natural_language_query', 'Parse and respond to a natural language expense query',
  'You are an expense query assistant. Parse the user''s natural language question into structured filters. Respond with data-backed answers. If the query is ambiguous, ask for clarification.',
  '{{query_text}}',
- ARRAY['user_info', 'available_filters'], 'json', 800, 0.1)
+ ARRAY['user_info', 'available_filters'], 'json', 800, 0.1),
+
+('chat_assistant', 'Interactive chat assistant for expense insights and questions',
+ 'You are a helpful expense management assistant. You have access to the user''s expense data and can answer questions about their spending patterns, trends, anomalies, and provide financial insights.
+
+Be concise, data-driven, and actionable. When referencing amounts, always use dollar signs and two decimal places. When you don''t have enough data to answer confidently, say so clearly.
+
+**User''s Expense Data:**
+{{expense_context}}
+
+**Semantically Relevant Items:**
+{{semantic_context}}',
+ '{{user_message}}',
+ ARRAY['expense_context', 'semantic_context'], 'text', 2048, 0.4)
 
 ON CONFLICT (name) DO NOTHING;

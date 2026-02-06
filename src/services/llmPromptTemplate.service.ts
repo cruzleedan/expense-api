@@ -296,15 +296,19 @@ export function renderTemplate(
   context: TemplateRenderContext
 ): { systemPrompt: string | null; userPrompt: string } {
   let userPrompt = template.user_prompt_template;
+  let systemPrompt = template.system_prompt;
 
   // Replace {{placeholders}} with context values
   for (const [key, value] of Object.entries(context)) {
     const placeholder = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
     userPrompt = userPrompt.replace(placeholder, String(value));
+    if (systemPrompt) {
+      systemPrompt = systemPrompt.replace(placeholder, String(value));
+    }
   }
 
   return {
-    systemPrompt: template.system_prompt,
+    systemPrompt,
     userPrompt,
   };
 }

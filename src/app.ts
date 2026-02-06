@@ -19,6 +19,7 @@ import { permissionsRouter } from './routes/permissions.js';
 import { projectsRouter } from './routes/projects.js';
 import { expensePoliciesRouter } from './routes/expensePolicies.js';
 import { llmPromptTemplatesRouter } from './routes/llmPromptTemplates.js';
+import { chatRouter } from './routes/chat.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -55,6 +56,7 @@ app.use('/v1/permissions/*', rateLimit());
 app.use('/v1/projects/*', rateLimit());
 app.use('/v1/expense-policies/*', rateLimit());
 app.use('/v1/llm-prompt-templates/*', rateLimit());
+app.use('/v1/chat/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -71,6 +73,7 @@ app.route('/v1/permissions', permissionsRouter);
 app.route('/v1/projects', projectsRouter);
 app.route('/v1/expense-policies', expensePoliciesRouter);
 app.route('/v1/llm-prompt-templates', llmPromptTemplatesRouter);
+app.route('/v1/chat', chatRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
@@ -105,6 +108,7 @@ app.doc('/openapi.json', {
     { name: 'Projects', description: 'Project and client management (v5.0)' },
     { name: 'Expense Policies', description: 'Expense policy rules and enforcement (v5.0)' },
     { name: 'LLM Prompt Templates', description: 'LLM prompt template management (v5.0)' },
+    { name: 'Chat', description: 'AI chat assistant for expense insights' },
   ],
   security: [{ Bearer: [] }],
   components: {

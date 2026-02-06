@@ -42,6 +42,12 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000), // 1 minute
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
   RATE_LIMIT_AUTH_MAX_REQUESTS: z.coerce.number().default(20),
+
+  // Ollama LLM Service
+  OLLAMA_HOST: z.string().default('http://shared-ollama:11434'),
+  OLLAMA_MODEL: z.string().default('qwen2.5:7b'),
+  OLLAMA_EMBED_MODEL: z.string().default('nomic-embed-text'),
+  OLLAMA_TIMEOUT: z.coerce.number().default(120000), // 2 minutes
 });
 
 export type Env = z.infer<typeof envSchema>;

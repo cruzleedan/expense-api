@@ -6,6 +6,7 @@ export const HealthStatusSchema = z.object({
   services: z.object({
     database: z.boolean(),
     receiptParser: z.boolean(),
+    ollama: z.boolean(),
   }),
   version: z.string(),
 }).openapi('HealthStatus');

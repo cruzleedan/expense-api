@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { healthCheck } from '../db/client.js';
 import { isParserAvailable } from '../services/receiptParser.service.js';
+import { isOllamaAvailable } from '../services/embedding.service.js';
 import { HealthStatusSchema, LivenessSchema, ReadinessSchema } from '../schemas/health.js';
 
 const healthRouter = new OpenAPIHono();
@@ -25,9 +26,10 @@ const healthRoute = createRoute({
 });
 
 healthRouter.openapi(healthRoute, async (c) => {
-  const [dbHealthy, parserAvailable] = await Promise.all([
+  const [dbHealthy, parserAvailable, ollamaAvailable] = await Promise.all([
     healthCheck(),
     isParserAvailable(),
+    isOllamaAvailable(),
   ]);
 
   const status = {
@@ -36,6 +38,7 @@ healthRouter.openapi(healthRoute, async (c) => {
     services: {
       database: dbHealthy,
       receiptParser: parserAvailable,
+      ollama: ollamaAvailable,
     },
     version: process.env.npm_package_version ?? '1.0.0',
   } as const;
