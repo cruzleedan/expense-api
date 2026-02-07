@@ -48,6 +48,7 @@ const listWorkflowsRoute = createRoute({
   summary: 'List all workflows',
   description: 'Get all active workflow definitions',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('workflow.view')] as const,
   responses: {
     200: {
       description: 'List of workflows',
@@ -56,7 +57,7 @@ const listWorkflowsRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(listWorkflowsRoute, requirePermission('workflow.view'), async (c) => {
+workflowRouter.openapi(listWorkflowsRoute, async (c) => {
   const workflows = await getAllWorkflows();
   return c.json({
     workflows: workflows.map(w => ({
@@ -76,6 +77,7 @@ const getWorkflowRoute = createRoute({
   summary: 'Get workflow details',
   description: 'Get a workflow definition by ID',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('workflow.view')] as const,
   request: {
     params: WorkflowIdParamSchema,
   },
@@ -91,7 +93,7 @@ const getWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(getWorkflowRoute, requirePermission('workflow.view'), async (c) => {
+workflowRouter.openapi(getWorkflowRoute, async (c) => {
   const { workflowId } = c.req.valid('param');
   const workflow = await getWorkflowById(workflowId);
 
@@ -114,6 +116,7 @@ const createWorkflowRoute = createRoute({
   summary: 'Create a new workflow',
   description: 'Create a new approval workflow definition',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('workflow.create')] as const,
   request: {
     body: {
       content: { 'application/json': { schema: CreateWorkflowRequestSchema } },
@@ -131,7 +134,7 @@ const createWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(createWorkflowRoute, requirePermission('workflow.create'), async (c) => {
+workflowRouter.openapi(createWorkflowRoute, async (c) => {
   const body = c.req.valid('json');
   const userId = getUserId(c);
 
@@ -159,6 +162,7 @@ const updateWorkflowRoute = createRoute({
   summary: 'Update a workflow',
   description: 'Update an existing workflow definition (creates new version)',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('workflow.edit')] as const,
   request: {
     params: WorkflowIdParamSchema,
     body: {
@@ -177,7 +181,7 @@ const updateWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(updateWorkflowRoute, requirePermission('workflow.edit'), async (c) => {
+workflowRouter.openapi(updateWorkflowRoute, async (c) => {
   const { workflowId } = c.req.valid('param');
   const body = c.req.valid('json');
   const userId = getUserId(c);
@@ -208,6 +212,7 @@ const submitReportRoute = createRoute({
   summary: 'Submit report for approval',
   description: 'Submit an expense report for workflow approval',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.submit')] as const,
   request: {
     params: ReportIdParamSchema,
   },
@@ -231,7 +236,7 @@ const submitReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(submitReportRoute, requirePermission('report.submit'), async (c) => {
+workflowRouter.openapi(submitReportRoute, async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
@@ -256,6 +261,7 @@ const approveReportRoute = createRoute({
   summary: 'Approve report',
   description: 'Approve an expense report at the current workflow step',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.approve')] as const,
   request: {
     params: ReportIdParamSchema,
     body: {
@@ -278,7 +284,7 @@ const approveReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(approveReportRoute, requirePermission('report.approve'), async (c) => {
+workflowRouter.openapi(approveReportRoute, async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -300,6 +306,7 @@ const rejectReportRoute = createRoute({
   summary: 'Reject report',
   description: 'Reject an expense report permanently',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.reject')] as const,
   request: {
     params: ReportIdParamSchema,
     body: {
@@ -322,7 +329,7 @@ const rejectReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(rejectReportRoute, requirePermission('report.reject'), async (c) => {
+workflowRouter.openapi(rejectReportRoute, async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment, rejection_category } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -340,6 +347,7 @@ const returnReportRoute = createRoute({
   summary: 'Return report for corrections',
   description: 'Return an expense report to the submitter for corrections',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.return')] as const,
   request: {
     params: ReportIdParamSchema,
     body: {
@@ -362,7 +370,7 @@ const returnReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(returnReportRoute, requirePermission('report.return'), async (c) => {
+workflowRouter.openapi(returnReportRoute, async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -380,6 +388,7 @@ const withdrawReportRoute = createRoute({
   summary: 'Withdraw report',
   description: 'Withdraw a submitted expense report back to draft status',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.withdraw')] as const,
   request: {
     params: ReportIdParamSchema,
   },
@@ -399,7 +408,7 @@ const withdrawReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(withdrawReportRoute, requirePermission('report.withdraw'), async (c) => {
+workflowRouter.openapi(withdrawReportRoute, async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
