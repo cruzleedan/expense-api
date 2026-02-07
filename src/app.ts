@@ -20,6 +20,10 @@ import { projectsRouter } from './routes/projects.js';
 import { expensePoliciesRouter } from './routes/expensePolicies.js';
 import { llmPromptTemplatesRouter } from './routes/llmPromptTemplates.js';
 import { chatRouter } from './routes/chat.js';
+import { analyticsRouter } from './routes/analytics.js';
+import { insightsRouter } from './routes/insights.js';
+import { anomaliesRouter } from './routes/anomalies.js';
+import { adminAnalyticsRouter } from './routes/adminAnalytics.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -57,6 +61,10 @@ app.use('/v1/projects/*', rateLimit());
 app.use('/v1/expense-policies/*', rateLimit());
 app.use('/v1/llm-prompt-templates/*', rateLimit());
 app.use('/v1/chat/*', rateLimit());
+app.use('/v1/analytics/*', rateLimit());
+app.use('/v1/insights/*', rateLimit());
+app.use('/v1/anomalies/*', rateLimit());
+app.use('/v1/admin/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -74,6 +82,10 @@ app.route('/v1/projects', projectsRouter);
 app.route('/v1/expense-policies', expensePoliciesRouter);
 app.route('/v1/llm-prompt-templates', llmPromptTemplatesRouter);
 app.route('/v1/chat', chatRouter);
+app.route('/v1/analytics', analyticsRouter);
+app.route('/v1/insights', insightsRouter);
+app.route('/v1/anomalies', anomaliesRouter);
+app.route('/v1/admin/analytics', adminAnalyticsRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
@@ -109,6 +121,10 @@ app.doc('/openapi.json', {
     { name: 'Expense Policies', description: 'Expense policy rules and enforcement (v5.0)' },
     { name: 'LLM Prompt Templates', description: 'LLM prompt template management (v5.0)' },
     { name: 'Chat', description: 'AI chat assistant for expense insights' },
+    { name: 'Analytics', description: 'Expense analytics and spending data' },
+    { name: 'Insights', description: 'Proactive spending insights and recommendations' },
+    { name: 'Anomalies', description: 'Expense anomaly detection and review' },
+    { name: 'Admin Analytics', description: 'Admin analytics dashboard for LLM usage and org-wide metrics' },
   ],
   security: [{ Bearer: [] }],
   components: {

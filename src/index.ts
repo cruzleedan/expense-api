@@ -3,6 +3,7 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { closePool } from './db/client.js';
+import { registerJobs } from './jobs/scheduler.js';
 
 const server = serve({
   fetch: app.fetch,
@@ -13,6 +14,9 @@ logger.info(`Expense API server started`, {
   port: env.PORT,
   environment: env.NODE_ENV,
 });
+
+// Start background jobs
+registerJobs();
 
 // Graceful shutdown
 const shutdown = async (signal: string) => {
