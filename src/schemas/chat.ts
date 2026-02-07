@@ -10,6 +10,10 @@ export const SendChatMessageSchema = z.object({
     example: '550e8400-e29b-41d4-a716-446655440000',
     description: 'Session ID to continue an existing conversation. Omit to start a new session.',
   }),
+  model: z.string().optional().openapi({
+    example: 'qwen2.5:7b',
+    description: 'Model to use for this message. Omit to use user preference or system default.',
+  }),
 }).openapi('SendChatMessage');
 
 // Session path param
@@ -48,6 +52,33 @@ export const ChatSessionListSchema = z.object({
 export const ChatSessionMessagesSchema = z.object({
   data: z.array(ChatMessageSchema),
 }).openapi('ChatSessionMessages');
+
+// Response: available chat model
+export const ChatModelSchema = z.object({
+  name: z.string(),
+  size: z.number(),
+  parameterSize: z.string(),
+  family: z.string(),
+}).openapi('ChatModel');
+
+// Response: models list
+export const ChatModelListSchema = z.object({
+  data: z.array(ChatModelSchema),
+  default: z.string(),
+}).openapi('ChatModelList');
+
+// Request: update LLM preferences
+export const LlmPreferencesSchema = z.object({
+  defaultModel: z.string().optional().openapi({
+    example: 'qwen2.5:7b',
+    description: 'Default model to use for chat',
+  }),
+}).openapi('LlmPreferences');
+
+// Response: LLM preferences
+export const LlmPreferencesResponseSchema = z.object({
+  data: LlmPreferencesSchema,
+}).openapi('LlmPreferencesResponse');
 
 // Request: feedback
 export const FeedbackSchema = z.object({
