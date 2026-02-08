@@ -25,6 +25,8 @@ export interface UserRole {
 export interface CreateUserInput {
   email: string;
   username?: string;
+  firstName?: string;
+  lastName?: string;
   password: string;
   departmentId?: string;
   managerId?: string;
@@ -37,6 +39,8 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
   email?: string;
   username?: string;
+  firstName?: string | null;
+  lastName?: string | null;
   isActive?: boolean;
   departmentId?: string | null;
   managerId?: string | null;
@@ -52,15 +56,22 @@ export interface ListUsersFilters {
 }
 
 // User type without sensitive fields
-export type SafeUser = Omit<User, 'password_hash' | 'oauth_id' | 'failed_login_attempts' | 'locked_until' | 'roles_version'>;
+export type SafeUser = Omit<User, 'password_hash' | 'oauth_id' | 'oauth_provider' | 'failed_login_attempts' | 'locked_until' | 'roles_version' | 'is_verified'>;
 
 export interface SafeUserWithRoles extends SafeUser {
   roles: UserRole[];
 }
 
+function computeStatus(user: User): string {
+  if (user.is_active) return 'active';
+  if (user.locked_until && user.locked_until > new Date()) return 'locked';
+  if (!user.is_verified) return 'pending_verification';
+  return 'inactive';
+}
+
 function toSafeUser(user: User): SafeUser {
-  const { password_hash, oauth_id, roles_version, failed_login_attempts, locked_until, ...safe } = user;
-  return safe;
+  const { password_hash, oauth_id, oauth_provider, roles_version, failed_login_attempts, locked_until, is_verified, ...safe } = user;
+  return { ...safe, status: user.status ?? computeStatus(user) };
 }
 
 async function hashPassword(password: string): Promise<string> {
@@ -110,12 +121,14 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const username = input.username || input.email.split('@')[0];
 
   const result = await query<User>(
-    `INSERT INTO users (email, username, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, true)
+    `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true)
      RETURNING *`,
     [
       input.email,
       username,
+      input.firstName ?? null,
+      input.lastName ?? null,
       passwordHash,
       input.departmentId ?? null,
       input.managerId ?? null,
@@ -194,7 +207,6 @@ export async function listUsers(
     'created_at DESC'
   );
 
-  // TODO: Instead of is_active, return status with values 'active', 'inactive', 'locked' or 'pending_verification'
   const [dataResult, countResult] = await Promise.all([
     query<User>(
       `SELECT
@@ -209,12 +221,13 @@ export async function listUsers(
         spending_profile,
         llm_preferences,
         CASE
-          WHEN is_active then 'active'
-          WHEN locked_until > NOW() then 'locked'
-          WHEN is_verified = false then 'pending_verification'
-        ELSE 'inactive'
+          WHEN is_active THEN 'active'
+          WHEN locked_until > NOW() THEN 'locked'
+          WHEN is_verified = false THEN 'pending_verification'
+          ELSE 'inactive'
         END AS status,
         is_active,
+        last_login_at,
         created_at,
         updated_at
        FROM users ${whereClause}
@@ -286,6 +299,18 @@ export async function updateUser(
   if (input.username !== undefined) {
     updates.push(`username = $${paramIndex}`);
     values.push(input.username);
+    paramIndex++;
+  }
+
+  if (input.firstName !== undefined) {
+    updates.push(`first_name = $${paramIndex}`);
+    values.push(input.firstName);
+    paramIndex++;
+  }
+
+  if (input.lastName !== undefined) {
+    updates.push(`last_name = $${paramIndex}`);
+    values.push(input.lastName);
     paramIndex++;
   }
 

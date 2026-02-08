@@ -2,11 +2,14 @@ export interface User {
   id: string;
   email: string;
   username: string | null;
+  first_name: string | null;
+  last_name: string | null;
   password_hash: string | null;
   oauth_provider: string | null;
   oauth_id: string | null;
   roles_version: number;
   is_active: boolean;
+  is_verified: boolean;
   failed_login_attempts: number;
   locked_until: Date | null;
   last_login_at: Date | null;
@@ -18,6 +21,8 @@ export interface User {
   llm_preferences: Record<string, unknown> | null;
   created_at: Date;
   updated_at: Date;
+  // Computed fields (not always present)
+  status?: string;
 }
 
 export interface RefreshToken {

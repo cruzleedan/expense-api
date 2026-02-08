@@ -1,9 +1,9 @@
 import { z } from '@hono/zod-openapi';
 
-export const UserSchema = z.object({
+export const AuthUserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
-}).openapi('User');
+}).openapi('AuthUser');
 
 export const RegisterRequestSchema = z.object({
   email: z.string().email().openapi({ example: 'user@example.com' }),
@@ -20,7 +20,7 @@ export const RefreshRequestSchema = z.object({
 }).openapi('RefreshRequest');
 
 export const AuthResponseSchema = z.object({
-  user: UserSchema,
+  user: AuthUserSchema,
   accessToken: z.string(),
 }).openapi('AuthResponse');
 

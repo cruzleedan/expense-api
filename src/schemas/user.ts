@@ -9,10 +9,15 @@ export const UserRoleSchema = z.object({
   assignedAt: z.string().datetime(),
 }).openapi('UserRole');
 
+export const UserStatusSchema = z.enum(['active', 'inactive', 'locked', 'pending_verification']).openapi('UserStatus');
+
 export const UserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   username: z.string().nullable(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  status: UserStatusSchema,
   isActive: z.boolean(),
   departmentId: z.string().uuid().nullable(),
   managerId: z.string().uuid().nullable(),
@@ -32,6 +37,8 @@ export const UserWithRolesSchema = UserSchema.extend({
 export const CreateUserSchema = z.object({
   email: z.string().email().openapi({ example: 'user@example.com' }),
   username: z.string().min(1).max(255).optional().openapi({ example: 'johndoe' }),
+  firstName: z.string().max(100).optional().openapi({ example: 'John' }),
+  lastName: z.string().max(100).optional().openapi({ example: 'Doe' }),
   password: z.string().min(8).max(128).openapi({ example: 'SecureP@ss123' }),
   departmentId: z.string().uuid().optional(),
   managerId: z.string().uuid().optional(),
@@ -44,6 +51,8 @@ export const CreateUserSchema = z.object({
 export const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
   username: z.string().min(1).max(255).optional(),
+  firstName: z.string().max(100).nullable().optional(),
+  lastName: z.string().max(100).nullable().optional(),
   isActive: z.boolean().optional(),
   departmentId: z.string().uuid().nullable().optional(),
   managerId: z.string().uuid().nullable().optional(),
