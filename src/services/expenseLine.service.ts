@@ -24,6 +24,16 @@ export interface CreateExpenseLineInput {
   locationCity?: string;
   locationCountry?: string;
   paymentMethod?: string;
+  originalAmount?: number;
+  originalCurrency?: string;
+  isBusinessExpense?: boolean;
+  isReimbursable?: boolean;
+  reimbursementStatus?: string;
+  taxAmount?: number;
+  taxRate?: number;
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
   projectId?: string;
   projectName?: string;
   clientName?: string;
@@ -44,6 +54,16 @@ export interface UpdateExpenseLineInput {
   locationCity?: string;
   locationCountry?: string;
   paymentMethod?: string;
+  originalAmount?: number;
+  originalCurrency?: string;
+  isBusinessExpense?: boolean;
+  isReimbursable?: boolean;
+  reimbursementStatus?: string;
+  taxAmount?: number;
+  taxRate?: number;
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
   projectId?: string;
   projectName?: string;
   clientName?: string;
@@ -65,10 +85,13 @@ export async function createExpenseLine(
     `INSERT INTO expense_lines (
       report_id, description, amount, currency, category_code, transaction_date,
       merchant_name, location_city, location_country, payment_method,
+      original_amount, original_currency,
+      is_business_expense, is_reimbursable, reimbursement_status,
+      tax_amount, tax_rate, notes, latitude, longitude,
       project_id, project_name, client_name, tags,
       is_recurring, recurrence_pattern, recurrence_merchant
     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
      RETURNING *`,
     [
       reportId,
@@ -81,6 +104,16 @@ export async function createExpenseLine(
       input.locationCity ?? null,
       input.locationCountry ?? null,
       input.paymentMethod ?? null,
+      input.originalAmount ?? null,
+      input.originalCurrency ?? null,
+      input.isBusinessExpense ?? false,
+      input.isReimbursable ?? false,
+      input.reimbursementStatus ?? 'not_applicable',
+      input.taxAmount ?? 0,
+      input.taxRate ?? 0,
+      input.notes ?? null,
+      input.latitude ?? null,
+      input.longitude ?? null,
       input.projectId ?? null,
       input.projectName ?? null,
       input.clientName ?? null,
@@ -271,6 +304,66 @@ export async function updateExpenseLine(
     paramIndex++;
   }
 
+  if (input.originalAmount !== undefined) {
+    updates.push(`original_amount = $${paramIndex}`);
+    values.push(input.originalAmount);
+    paramIndex++;
+  }
+
+  if (input.originalCurrency !== undefined) {
+    updates.push(`original_currency = $${paramIndex}`);
+    values.push(input.originalCurrency);
+    paramIndex++;
+  }
+
+  if (input.isBusinessExpense !== undefined) {
+    updates.push(`is_business_expense = $${paramIndex}`);
+    values.push(input.isBusinessExpense);
+    paramIndex++;
+  }
+
+  if (input.isReimbursable !== undefined) {
+    updates.push(`is_reimbursable = $${paramIndex}`);
+    values.push(input.isReimbursable);
+    paramIndex++;
+  }
+
+  if (input.reimbursementStatus !== undefined) {
+    updates.push(`reimbursement_status = $${paramIndex}`);
+    values.push(input.reimbursementStatus);
+    paramIndex++;
+  }
+
+  if (input.taxAmount !== undefined) {
+    updates.push(`tax_amount = $${paramIndex}`);
+    values.push(input.taxAmount);
+    paramIndex++;
+  }
+
+  if (input.taxRate !== undefined) {
+    updates.push(`tax_rate = $${paramIndex}`);
+    values.push(input.taxRate);
+    paramIndex++;
+  }
+
+  if (input.notes !== undefined) {
+    updates.push(`notes = $${paramIndex}`);
+    values.push(input.notes);
+    paramIndex++;
+  }
+
+  if (input.latitude !== undefined) {
+    updates.push(`latitude = $${paramIndex}`);
+    values.push(input.latitude);
+    paramIndex++;
+  }
+
+  if (input.longitude !== undefined) {
+    updates.push(`longitude = $${paramIndex}`);
+    values.push(input.longitude);
+    paramIndex++;
+  }
+
   if (input.projectId !== undefined) {
     updates.push(`project_id = $${paramIndex}`);
     values.push(input.projectId);
@@ -367,6 +460,16 @@ export interface BulkCreateExpenseLineInput {
   locationCity?: string;
   locationCountry?: string;
   paymentMethod?: string;
+  originalAmount?: number;
+  originalCurrency?: string;
+  isBusinessExpense?: boolean;
+  isReimbursable?: boolean;
+  reimbursementStatus?: string;
+  taxAmount?: number;
+  taxRate?: number;
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
   projectId?: string;
   projectName?: string;
   clientName?: string;
@@ -425,10 +528,13 @@ export async function bulkCreateExpenseLines(
           `INSERT INTO expense_lines (
             report_id, description, amount, currency, category_code, transaction_date,
             merchant_name, location_city, location_country, payment_method,
+            original_amount, original_currency,
+            is_business_expense, is_reimbursable, reimbursement_status,
+            tax_amount, tax_rate, notes, latitude, longitude,
             project_id, project_name, client_name, tags,
             is_recurring, recurrence_pattern, recurrence_merchant
           )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
            RETURNING *`,
           [
             reportId,
@@ -441,6 +547,16 @@ export async function bulkCreateExpenseLines(
             line.locationCity ?? null,
             line.locationCountry ?? null,
             line.paymentMethod ?? null,
+            line.originalAmount ?? null,
+            line.originalCurrency ?? null,
+            line.isBusinessExpense ?? false,
+            line.isReimbursable ?? false,
+            line.reimbursementStatus ?? 'not_applicable',
+            line.taxAmount ?? 0,
+            line.taxRate ?? 0,
+            line.notes ?? null,
+            line.latitude ?? null,
+            line.longitude ?? null,
             line.projectId ?? null,
             line.projectName ?? null,
             line.clientName ?? null,

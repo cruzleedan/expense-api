@@ -23,13 +23,16 @@ export interface CreateExpenseReportInput {
   projectName?: string;
   clientName?: string;
   tags?: string[];
+  submissionComment?: string;
+  exchangeRate?: number;
+  baseCurrencyTotal?: number;
 }
 
 export interface UpdateExpenseReportInput {
   title?: string;
   description?: string;
   reportDate?: string;
-  status?: 'draft' | 'submitted' | 'approved' | 'rejected';
+  status?: 'draft' | 'pending' | 'submitted' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
   totalAmount?: number;
   netAmount?: number;
   currency?: string;
@@ -38,6 +41,12 @@ export interface UpdateExpenseReportInput {
   projectName?: string;
   clientName?: string;
   tags?: string[];
+  submissionComment?: string;
+  rejectionReason?: string;
+  paidAt?: string;
+  paidBy?: string;
+  exchangeRate?: number;
+  baseCurrencyTotal?: number;
 }
 
 export async function createExpenseReport(
@@ -56,9 +65,12 @@ export async function createExpenseReport(
       project_id,
       project_name,
       client_name,
-      tags
+      tags,
+      submission_comment,
+      exchange_rate,
+      base_currency_total
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     RETURNING *`,
     [
       userId,
@@ -71,7 +83,10 @@ export async function createExpenseReport(
       input.projectId ?? null,
       input.projectName ?? null,
       input.clientName ?? null,
-      input.tags ?? null
+      input.tags ?? null,
+      input.submissionComment ?? null,
+      input.exchangeRate ?? 1.0,
+      input.baseCurrencyTotal ?? null
     ]
   );
 
@@ -201,6 +216,12 @@ export async function updateExpenseReport(
     projectName: 'project_name',
     clientName: 'client_name',
     tags: 'tags',
+    submissionComment: 'submission_comment',
+    rejectionReason: 'rejection_reason',
+    paidAt: 'paid_at',
+    paidBy: 'paid_by',
+    exchangeRate: 'exchange_rate',
+    baseCurrencyTotal: 'base_currency_total',
   } as const;
 
   const { updates, values, nextIndex } = buildUpdateFields(input, fieldMap);
