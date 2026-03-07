@@ -152,10 +152,13 @@ export async function getExpenseLineById(
 export async function listExpenseLines(
   reportId: string,
   userId: string,
-  params: PaginationParams
+  params: PaginationParams,
+  skipOwnershipCheck = false
 ): Promise<{ lines: ExpenseLine[]; total: number }> {
-  // Verify user owns the report
-  await verifyReportOwnership(reportId, userId);
+  // Verify user owns the report (skip for approvers)
+  if (!skipOwnershipCheck) {
+    await verifyReportOwnership(reportId, userId);
+  }
 
   const offset = getOffset(params);
   const conditions = ['report_id = $1'];

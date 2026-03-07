@@ -10,6 +10,7 @@ import {
   type PaginationParams,
 } from '../utils/pagination.js';
 import { buildUpdateFields } from '../utils/caseTransform.js';
+import { canAccessReport } from './approval.service.js';
 
 export interface CreateExpenseReportInput {
   title: string;
@@ -80,7 +81,8 @@ export async function createExpenseReport(
 
 export async function getExpenseReportById(
   reportId: string,
-  userId: string
+  userId: string,
+  permissions: string[] = []
 ): Promise<ExpenseReport> {
   const result = await query<ExpenseReport>(
     `SELECT
@@ -118,8 +120,17 @@ export async function getExpenseReportById(
 
   const report = result.rows[0];
 
-  if (report.user_id !== userId) {
-    throw new ForbiddenError('Access denied to this expense report');
+  // Use permission-based access control if permissions are provided
+  if (permissions.length > 0) {
+    const accessCheck = await canAccessReport(userId, reportId, permissions);
+    if (!accessCheck.allowed) {
+      throw new ForbiddenError(accessCheck.reason || 'Access denied to this expense report');
+    }
+  } else {
+    // Fallback to simple ownership check for backward compatibility
+    if (report.user_id !== userId) {
+      throw new ForbiddenError('Access denied to this expense report');
+    }
   }
 
   return report;
@@ -184,10 +195,11 @@ export async function listExpenseReports(
 export async function updateExpenseReport(
   reportId: string,
   userId: string,
-  input: UpdateExpenseReportInput
+  input: UpdateExpenseReportInput,
+  permissions: string[] = []
 ): Promise<ExpenseReport> {
-  // First check ownership
-  await getExpenseReportById(reportId, userId);
+  // First check ownership/access
+  await getExpenseReportById(reportId, userId, permissions);
 
   const fieldMap = {
     title: 'title',
@@ -206,7 +218,7 @@ export async function updateExpenseReport(
   const { updates, values, nextIndex } = buildUpdateFields(input, fieldMap);
 
   if (updates.length === 0) {
-    return getExpenseReportById(reportId, userId);
+    return getExpenseReportById(reportId, userId, permissions);
   }
 
   values.push(reportId);
@@ -223,10 +235,11 @@ export async function updateExpenseReport(
 
 export async function deleteExpenseReport(
   reportId: string,
-  userId: string
+  userId: string,
+  permissions: string[] = []
 ): Promise<void> {
-  // Check ownership
-  await getExpenseReportById(reportId, userId);
+  // Check ownership/access
+  await getExpenseReportById(reportId, userId, permissions);
 
   await query('DELETE FROM expense_reports WHERE id = $1', [reportId]);
 }
@@ -234,7 +247,24 @@ export async function deleteExpenseReport(
 // Helper to verify report ownership (used by other services)
 export async function verifyReportOwnership(
   reportId: string,
-  userId: string
+  userId: string,
+  permissions?: string[]
 ): Promise<ExpenseReport> {
-  return getExpenseReportById(reportId, userId);
+  // If permissions are not provided, fetch them from the database
+  let userPermissions = permissions;
+  if (!userPermissions || userPermissions.length === 0) {
+    const userResult = await query<{ permission_name: string }>(
+      `SELECT DISTINCT p.name as permission_name
+       FROM users u
+       JOIN user_roles ur ON u.id = ur.user_id
+       JOIN role_permissions rp ON ur.role_id = rp.role_id
+       JOIN permissions p ON rp.permission_id = p.id
+       WHERE u.id = $1`,
+      [userId]
+    );
+
+    userPermissions = userResult.rows.map((row: { permission_name: string }) => row.permission_name);
+  }
+
+  return getExpenseReportById(reportId, userId, userPermissions);
 }

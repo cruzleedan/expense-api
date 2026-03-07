@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
+import { getAuthUser } from '../middleware/permission.js';
 import {
   createExpenseReport,
   getExpenseReportById,
@@ -145,7 +146,11 @@ expenseReportsRouter.openapi(getRoute, async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
-  const report = await getExpenseReportById(id, userId);
+  // Get user permissions from JWT if available
+  const user = c.get('user');
+  const permissions = user?.permissions || [];
+
+  const report = await getExpenseReportById(id, userId, permissions);
 
   return c.json(report, 200);
 });
@@ -194,7 +199,11 @@ expenseReportsRouter.openapi(updateRoute, async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
-  const report = await updateExpenseReport(id, userId, input);
+  // Get user permissions from JWT if available
+  const user = c.get('user');
+  const permissions = user?.permissions || [];
+
+  const report = await updateExpenseReport(id, userId, input, permissions);
 
   return c.json(report, 200);
 });
@@ -235,7 +244,11 @@ expenseReportsRouter.openapi(deleteRoute, async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
-  await deleteExpenseReport(id, userId);
+  // Get user permissions from JWT if available
+  const user = c.get('user');
+  const permissions = user?.permissions || [];
+
+  await deleteExpenseReport(id, userId, permissions);
 
   return c.json({ message: 'Expense report deleted' }, 200);
 });

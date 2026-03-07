@@ -319,9 +319,18 @@ export async function approveReport(
       throw new ValidationError(`Cannot approve report in ${report.status} status`);
     }
 
+    // Check if workflow snapshot exists
+    if (!report.workflow_snapshot) {
+      throw new ValidationError('Report has no workflow assigned. Please resubmit the report.');
+    }
+
     const workflow = typeof report.workflow_snapshot === 'string'
       ? JSON.parse(report.workflow_snapshot)
       : report.workflow_snapshot;
+
+    if (!workflow || !workflow.steps) {
+      throw new ValidationError('Invalid workflow configuration. Please resubmit the report.');
+    }
 
     const currentStep = report.current_step || 1;
     const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
@@ -338,7 +347,11 @@ export async function approveReport(
       approverId,
       approverEmail,
       'approve',
-      comment
+      comment,
+      undefined, // rejectionCategory
+      undefined, // slaDeadline
+      undefined, // wasEscalated
+      client // transaction client
     );
 
     // Determine if there's a next step
@@ -441,9 +454,18 @@ export async function rejectReport(
       throw new ValidationError(`Cannot reject report in ${report.status} status`);
     }
 
+    // Check if workflow snapshot exists
+    if (!report.workflow_snapshot) {
+      throw new ValidationError('Report has no workflow assigned. Please contact administrator.');
+    }
+
     const workflow = typeof report.workflow_snapshot === 'string'
       ? JSON.parse(report.workflow_snapshot)
       : report.workflow_snapshot;
+
+    if (!workflow || !workflow.steps) {
+      throw new ValidationError('Invalid workflow configuration. Please contact administrator.');
+    }
 
     const currentStep = report.current_step || 1;
     const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
@@ -457,7 +479,10 @@ export async function rejectReport(
       approverEmail,
       'reject',
       comment,
-      rejectionCategory
+      rejectionCategory,
+      undefined, // slaDeadline
+      undefined, // wasEscalated
+      client // transaction client
     );
 
     // Mark report as rejected
@@ -526,9 +551,18 @@ export async function returnReport(
       throw new ValidationError(`Cannot return report in ${report.status} status`);
     }
 
+    // Check if workflow snapshot exists
+    if (!report.workflow_snapshot) {
+      throw new ValidationError('Report has no workflow assigned. Please contact administrator.');
+    }
+
     const workflow = typeof report.workflow_snapshot === 'string'
       ? JSON.parse(report.workflow_snapshot)
       : report.workflow_snapshot;
+
+    if (!workflow || !workflow.steps) {
+      throw new ValidationError('Invalid workflow configuration. Please contact administrator.');
+    }
 
     const currentStep = report.current_step || 1;
     const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
@@ -541,7 +575,11 @@ export async function returnReport(
       approverId,
       approverEmail,
       'return',
-      comment
+      comment,
+      undefined, // rejectionCategory
+      undefined, // slaDeadline
+      undefined, // wasEscalated
+      client // transaction client
     );
 
     // Determine restart policy
@@ -656,6 +694,93 @@ export async function withdrawReport(
     });
 
     logger.info('Report withdrawn', { reportId, userId });
+
+    return { success: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Revise a rejected report (by the submitter)
+ * Transitions rejected → draft so the employee can edit and resubmit
+ */
+export async function reviseReport(
+  reportId: string,
+  userId: string,
+  userEmail: string
+): Promise<{ success: boolean }> {
+  const client = await db.getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    // Get report with lock
+    const reportResult = await client.query<ExpenseReport>(
+      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      [reportId]
+    );
+
+    if (reportResult.rows.length === 0) {
+      throw new NotFoundError('Expense report');
+    }
+
+    const report = reportResult.rows[0];
+
+    // Must be owner
+    if (report.user_id !== userId) {
+      throw new ForbiddenError('Can only revise your own reports');
+    }
+
+    // Can only revise rejected reports
+    if (report.status !== 'rejected') {
+      throw new ValidationError(`Cannot revise report in ${report.status} status`);
+    }
+
+    // Record the revise action in approval history
+    const currentStep = report.current_step || 0;
+    await recordApprovalAction(
+      reportId,
+      currentStep,
+      'Revision',
+      userId,
+      userEmail,
+      'revise',
+      'Report reopened for revision after rejection',
+      undefined, // rejectionCategory
+      undefined, // slaDeadline
+      undefined, // wasEscalated
+      client     // transaction client
+    );
+
+    // Transition to draft, clear workflow state for fresh re-approval
+    await client.query(
+      `UPDATE expense_reports
+       SET status = 'draft',
+           current_step = NULL,
+           workflow_id = NULL,
+           workflow_snapshot = NULL,
+           submitted_at = NULL,
+           version = version + 1
+       WHERE id = $1`,
+      [reportId]
+    );
+
+    await client.query('COMMIT');
+
+    // Log audit event
+    await logAuditEvent({
+      actorId: userId,
+      action: 'report.revise',
+      actionCategory: 'workflow',
+      resourceType: 'expense_report',
+      resourceId: reportId,
+    });
+
+    logger.info('Rejected report reopened for revision', { reportId, userId });
 
     return { success: true };
   } catch (error) {

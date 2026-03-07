@@ -11,8 +11,10 @@ import {
   rejectReport,
   returnReport,
   withdrawReport,
+  reviseReport,
   getReportWorkflowStatus,
 } from '../services/workflow.service.js';
+import { getPendingApprovalsForUser } from '../services/approval.service.js';
 import { NotFoundError } from '../types/index.js';
 import {
   WorkflowSchema,
@@ -28,6 +30,7 @@ import {
   ActionResponseSchema,
   WorkflowIdParamSchema,
   ReportIdParamSchema,
+  PendingApprovalsResponseSchema,
 } from '../schemas/workflow.js';
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
 
@@ -417,6 +420,47 @@ workflowRouter.openapi(withdrawReportRoute, async (c) => {
   return c.json({ success: result.success }, 200);
 });
 
+// Revise rejected report
+const reviseReportRoute = createRoute({
+  method: 'post',
+  path: '/reports/{reportId}/revise',
+  tags: ['Report Workflow'],
+  summary: 'Revise a rejected report',
+  description: 'Reopen a rejected expense report for revision, transitioning it back to draft status',
+  security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.submit')] as const,
+  request: {
+    params: ReportIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: 'Report reopened for revision',
+      content: { 'application/json': { schema: ActionResponseSchema } },
+    },
+    400: {
+      description: 'Validation error (report not in rejected status)',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden (not owner)',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Report not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+workflowRouter.openapi(reviseReportRoute, async (c) => {
+  const { reportId } = c.req.valid('param');
+  const authUser = getAuthUser(c);
+
+  const result = await reviseReport(reportId, authUser.id, authUser.email);
+
+  return c.json({ success: result.success }, 200);
+});
+
 // Get workflow status for a report
 const getReportStatusRoute = createRoute({
   method: 'get',
@@ -463,6 +507,39 @@ workflowRouter.openapi(getReportStatusRoute, async (c) => {
       created_at: h.created_at.toISOString(),
       sla_deadline: h.sla_deadline?.toISOString() || null,
     })),
+  }, 200);
+});
+
+// ============================================================================
+// PENDING APPROVALS
+// ============================================================================
+
+const getPendingApprovalsRoute = createRoute({
+  method: 'get',
+  path: '/approvals/pending',
+  tags: ['Report Workflow'],
+  summary: 'Get pending approvals for current user',
+  description: 'Get all reports pending the current user\'s approval action',
+  security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.approve')] as const,
+  responses: {
+    200: {
+      description: 'List of pending approvals',
+      content: { 'application/json': { schema: PendingApprovalsResponseSchema } },
+    },
+  },
+});
+
+workflowRouter.openapi(getPendingApprovalsRoute, async (c) => {
+  const authUser = getAuthUser(c);
+  const approvals = await getPendingApprovalsForUser(authUser.id, authUser.roles);
+
+  return c.json({
+    approvals: approvals.map(a => ({
+      ...a,
+      submitted_at: a.submitted_at.toISOString(),
+    })),
+    total: approvals.length,
   }, 200);
 });
 

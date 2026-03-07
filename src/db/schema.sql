@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS approval_history (
     step_name VARCHAR(255),
     actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
     actor_email VARCHAR(255),
-    action VARCHAR(50) NOT NULL CHECK (action IN ('approve', 'reject', 'return', 'escalate', 'auto_approve')),
+    action VARCHAR(50) NOT NULL CHECK (action IN ('approve', 'reject', 'return', 'escalate', 'auto_approve', 'revise')),
     comment TEXT,
     rejection_category VARCHAR(100),
     report_hash VARCHAR(64),  -- SHA-256 of report state at time of action

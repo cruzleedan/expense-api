@@ -1,5 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { authMiddleware, getUserId } from '../middleware/auth.js';
+import { authMiddleware, getUserId, getUser } from '../middleware/auth.js';
+import type { JwtPayloadV3 } from '../types/index.js';
+import { isReportPendingApprovalByUser } from '../services/approval.service.js';
 import {
   createExpenseLine,
   getExpenseLineById,
@@ -77,7 +79,14 @@ expenseLinesRouter.openapi(listRoute, async (c) => {
     sortOrder: query.sortOrder,
   };
 
-  const { lines, total } = await listExpenseLines(reportId, userId, paginationParams);
+  // Approvers can view expense lines only for reports pending their approval
+  let skipOwnership = false;
+  const jwtPayload = getUser(c) as unknown as JwtPayloadV3;
+  if (jwtPayload.permissions?.includes('report.approve')) {
+    skipOwnership = await isReportPendingApprovalByUser(reportId, userId, jwtPayload.roles ?? []);
+  }
+
+  const { lines, total } = await listExpenseLines(reportId, userId, paginationParams, skipOwnership);
 
   return c.json(paginate(lines, total, paginationParams), 200);
 });

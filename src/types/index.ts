@@ -336,7 +336,7 @@ export interface WorkflowAssignment {
   created_at: Date;
 }
 
-export type ApprovalAction = 'approve' | 'reject' | 'return' | 'escalate' | 'auto_approve';
+export type ApprovalAction = 'approve' | 'reject' | 'return' | 'escalate' | 'auto_approve' | 'revise';
 
 export interface ApprovalHistory {
   id: string;

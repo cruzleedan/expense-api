@@ -4,6 +4,9 @@ import {
   getSpendingByCategory,
   getSpendingTrend,
   getPeriodComparison,
+  getDashboardSummary,
+  getTopMerchants,
+  getCategoryTrend,
 } from '../services/analytics.service.js';
 import {
   AnalyticsQuerySchema,
@@ -12,6 +15,11 @@ import {
   CategorySpendingResponseSchema,
   SpendingTrendResponseSchema,
   PeriodComparisonResponseSchema,
+  DashboardSummaryResponseSchema,
+  TopMerchantQuerySchema,
+  TopMerchantResponseSchema,
+  CategoryTrendQuerySchema,
+  CategoryTrendResponseSchema,
 } from '../schemas/analytics.js';
 import { ErrorSchema, AuthHeaderSchema } from '../schemas/common.js';
 
@@ -120,6 +128,106 @@ analyticsRouter.openapi(periodComparisonRoute, async (c) => {
   const userId = c.get('userId');
   const { period } = c.req.valid('query');
   const data = await getPeriodComparison(userId, period);
+  return c.json({ data }, 200);
+});
+
+// ============================================================================
+// GET /v1/analytics/dashboard-summary
+// ============================================================================
+
+const dashboardSummaryRoute = createRoute({
+  method: 'get',
+  path: '/dashboard-summary',
+  tags: ['Analytics'],
+  summary: 'Get dashboard summary stats',
+  description: 'Returns pre-computed counts and totals for the dashboard stat cards',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Dashboard summary',
+      content: { 'application/json': { schema: DashboardSummaryResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+analyticsRouter.openapi(dashboardSummaryRoute, async (c) => {
+  const userId = c.get('userId');
+  const data = await getDashboardSummary(userId);
+  return c.json({ data }, 200);
+});
+
+// ============================================================================
+// GET /v1/analytics/top-merchants
+// ============================================================================
+
+const topMerchantsRoute = createRoute({
+  method: 'get',
+  path: '/top-merchants',
+  tags: ['Analytics'],
+  summary: 'Get top merchants by spending',
+  description: 'Returns top merchants ranked by total spending for a given time period',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    query: TopMerchantQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Top merchants',
+      content: { 'application/json': { schema: TopMerchantResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+analyticsRouter.openapi(topMerchantsRoute, async (c) => {
+  const userId = c.get('userId');
+  const { days, limit } = c.req.valid('query');
+  const data = await getTopMerchants(userId, days, limit);
+  return c.json({ data }, 200);
+});
+
+// ============================================================================
+// GET /v1/analytics/category-trend
+// ============================================================================
+
+const categoryTrendRoute = createRoute({
+  method: 'get',
+  path: '/category-trend',
+  tags: ['Analytics'],
+  summary: 'Get monthly category spending trend',
+  description: 'Returns monthly spending broken down by top N categories',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    query: CategoryTrendQuerySchema,
+  },
+  responses: {
+    200: {
+      description: 'Category trend data',
+      content: { 'application/json': { schema: CategoryTrendResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+analyticsRouter.openapi(categoryTrendRoute, async (c) => {
+  const userId = c.get('userId');
+  const { months, limit } = c.req.valid('query');
+  const data = await getCategoryTrend(userId, months, limit);
   return c.json({ data }, 200);
 });
 

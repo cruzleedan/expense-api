@@ -57,9 +57,18 @@ export async function canApproveReport(
   }
 
   // Check 2: Previous interaction in workflow (temporal separation)
+  // Only consider actions after the most recent 'revise' action, since revision
+  // resets the approval cycle and allows the same approvers to re-review.
+  // TODO: Add a workflow-level setting (e.g. `on_revise_approver_policy: 'allow_same' | 'require_different'`)
+  // to let system admins choose whether the same approver can re-review after revision.
   const previousActionResult = await db.query<{ action: string; created_at: Date }>(
     `SELECT action, created_at FROM approval_history
      WHERE report_id = $1 AND actor_id = $2
+       AND action != 'revise'
+       AND created_at > COALESCE(
+         (SELECT MAX(created_at) FROM approval_history WHERE report_id = $1 AND action = 'revise'),
+         '1970-01-01'::timestamptz
+       )
      ORDER BY created_at DESC
      LIMIT 1`,
     [reportId, approverId]
@@ -235,14 +244,18 @@ export async function recordApprovalAction(
   stepName: string,
   actorId: string,
   actorEmail: string,
-  action: 'approve' | 'reject' | 'return' | 'escalate' | 'auto_approve',
+  action: 'approve' | 'reject' | 'return' | 'escalate' | 'auto_approve' | 'revise',
   comment?: string,
   rejectionCategory?: string,
   slaDeadline?: Date,
-  wasEscalated?: boolean
+  wasEscalated?: boolean,
+  client?: any // Optional transaction client
 ): Promise<ApprovalHistory> {
+  // Use provided client or default to db.query
+  const queryFn = client ? client.query.bind(client) : db.query.bind(db);
+
   // Generate hash of report state at time of action
-  const reportHashResult = await db.query<{ report_hash: string }>(
+  const reportHashResult = await queryFn<{ report_hash: string }>(
     `SELECT encode(sha256(
        (SELECT row_to_json(r)::text FROM expense_reports r WHERE id = $1)::bytea
      ), 'hex') as report_hash`,
@@ -250,7 +263,7 @@ export async function recordApprovalAction(
   );
   const reportHash = reportHashResult.rows[0]?.report_hash;
 
-  const result = await db.query<ApprovalHistory>(
+  const result = await queryFn<ApprovalHistory>(
     `INSERT INTO approval_history
      (report_id, step_number, step_name, actor_id, actor_email, action, comment, rejection_category, report_hash, sla_deadline, was_escalated)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -288,7 +301,20 @@ export async function getPendingApprovalsForUser(
   userId: string,
   userRoles: string[],
   managerId?: string
-): Promise<Array<{ report_id: string; title: string; submitter_email: string; amount: string; submitted_at: Date }>> {
+): Promise<Array<{
+  report_id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  submitter_email: string;
+  amount: string;
+  currency: string;
+  report_date: string | null;
+  submitted_at: Date;
+  project_name: string | null;
+  current_step: number | null;
+  total_steps: number;
+}>> {
   // This is a simplified implementation - in production, this would need to
   // consider the actual workflow step assignments
 
@@ -300,12 +326,23 @@ export async function getPendingApprovalsForUser(
   const result = await db.query<{
     report_id: string;
     title: string;
+    description: string | null;
+    status: string;
     submitter_email: string;
     amount: string;
+    currency: string;
+    report_date: string | null;
     submitted_at: Date;
+    project_name: string | null;
+    current_step: number | null;
+    total_steps: number;
   }>(
-    `SELECT er.id as report_id, er.title, u.email as submitter_email,
-            COALESCE(er.total_amount, 0) as amount, er.submitted_at
+    `SELECT er.id as report_id, er.title, er.description, er.status,
+            u.email as submitter_email,
+            COALESCE(er.total_amount, 0) as amount, er.currency,
+            er.report_date, er.submitted_at, er.project_name,
+            er.current_step,
+            COALESCE(jsonb_array_length(er.workflow_snapshot->'steps'), 0) as total_steps
      FROM expense_reports er
      JOIN users u ON er.user_id = u.id
      WHERE er.status IN ('submitted', 'pending')
@@ -313,6 +350,11 @@ export async function getPendingApprovalsForUser(
        AND NOT EXISTS (
          SELECT 1 FROM approval_history ah
          WHERE ah.report_id = er.id AND ah.actor_id = $1
+           AND ah.action != 'revise'
+           AND ah.created_at > COALESCE(
+             (SELECT MAX(ah2.created_at) FROM approval_history ah2 WHERE ah2.report_id = er.id AND ah2.action = 'revise'),
+             '1970-01-01'::timestamptz
+           )
        )
        AND (
          -- User is direct manager of submitter
@@ -329,6 +371,48 @@ export async function getPendingApprovalsForUser(
   );
 
   return result.rows;
+}
+
+/**
+ * Check if a specific report is pending a given user's approval.
+ * Used to authorize approvers to view report details (expense lines, etc.)
+ * without granting blanket access to all reports.
+ */
+export async function isReportPendingApprovalByUser(
+  reportId: string,
+  userId: string,
+  userRoles: string[]
+): Promise<boolean> {
+  const result = await db.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM expense_reports er
+      JOIN users u ON er.user_id = u.id
+      WHERE er.id = $3
+        AND er.status IN ('submitted', 'pending')
+        AND er.user_id != $1
+        AND NOT EXISTS (
+          SELECT 1 FROM approval_history ah
+          WHERE ah.report_id = er.id AND ah.actor_id = $1
+            AND ah.action != 'revise'
+            AND ah.created_at > COALESCE(
+              (SELECT MAX(ah2.created_at) FROM approval_history ah2 WHERE ah2.report_id = er.id AND ah2.action = 'revise'),
+              '1970-01-01'::timestamptz
+            )
+        )
+        AND (
+          u.manager_id = $1
+          OR (
+            $2 = true AND u.department_id IN (
+              SELECT department_id FROM users WHERE id = $1
+            )
+          )
+        )
+    ) as exists`,
+    [userId, userRoles.includes('approver'), reportId]
+  );
+
+  return result.rows[0]?.exists ?? false;
 }
 
 /**

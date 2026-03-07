@@ -141,3 +141,24 @@ export const WorkflowIdParamSchema = z.object({
 export const ReportIdParamSchema = z.object({
   reportId: z.string().uuid(),
 }).openapi('ReportIdParam');
+
+// Pending approvals schemas
+export const PendingApprovalItemSchema = z.object({
+  report_id: z.string().uuid(),
+  title: z.string(),
+  description: z.string().nullable(),
+  status: z.string(),
+  submitter_email: z.string(),
+  amount: z.string(),
+  currency: z.string(),
+  report_date: z.string().nullable(),
+  submitted_at: z.string().datetime(),
+  project_name: z.string().nullable(),
+  current_step: z.number().int().nullable(),
+  total_steps: z.number().int(),
+}).openapi('PendingApprovalItem');
+
+export const PendingApprovalsResponseSchema = z.object({
+  approvals: z.array(PendingApprovalItemSchema),
+  total: z.number().int(),
+}).openapi('PendingApprovalsResponse');
