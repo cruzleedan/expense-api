@@ -1,7 +1,7 @@
 import { z } from '@hono/zod-openapi';
 import { PaginationMetaSchema } from './common.js';
 
-export const ExpenseReportStatusSchema = z.enum(['draft', 'submitted', 'approved', 'rejected']);
+export const ExpenseReportStatusSchema = z.enum(['draft', 'pending', 'submitted', 'approved', 'rejected', 'returned', 'posted', 'paid']);
 
 export const ExpenseReportSchema = z.object({
   id: z.string().uuid(),
@@ -18,6 +18,16 @@ export const ExpenseReportSchema = z.object({
   projectName: z.string().nullable(),
   clientName: z.string().nullable(),
   tags: z.array(z.string()).nullable(),
+  // Workflow / audit
+  submissionComment: z.string().nullable(),
+  rejectionReason: z.string().nullable(),
+  submittedAt: z.string().datetime().nullable(),
+  approvedAt: z.string().datetime().nullable(),
+  postedAt: z.string().datetime().nullable(),
+  paidAt: z.string().datetime().nullable(),
+  paidBy: z.string().nullable(),
+  exchangeRate: z.number().nullable(),
+  baseCurrencyTotal: z.number().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).openapi('ExpenseReport');
@@ -34,6 +44,9 @@ export const CreateExpenseReportSchema = z.object({
   projectName: z.string().max(255).optional().openapi({ example: 'Project Alpha' }),
   clientName: z.string().max(255).optional().openapi({ example: 'Acme Corporation' }),
   tags: z.array(z.string().max(50)).max(20).optional().openapi({ example: ['q1-2024', 'travel', 'billable'] }),
+  submissionComment: z.string().max(2000).optional().openapi({ example: 'Approved for team offsite expenses' }),
+  exchangeRate: z.number().positive().optional().openapi({ example: 1.0 }),
+  baseCurrencyTotal: z.number().optional().openapi({ example: 1234.56 }),
 }).openapi('CreateExpenseReport');
 
 export const UpdateExpenseReportSchema = z.object({
@@ -49,6 +62,12 @@ export const UpdateExpenseReportSchema = z.object({
   projectName: z.string().max(255).nullable().optional(),
   clientName: z.string().max(255).nullable().optional(),
   tags: z.array(z.string().max(50)).max(20).nullable().optional(),
+  submissionComment: z.string().max(2000).nullable().optional(),
+  rejectionReason: z.string().max(2000).nullable().optional(),
+  paidAt: z.string().datetime().nullable().optional(),
+  paidBy: z.string().max(255).nullable().optional(),
+  exchangeRate: z.number().positive().nullable().optional(),
+  baseCurrencyTotal: z.number().nullable().optional(),
 }).openapi('UpdateExpenseReport');
 
 // Allowed sortBy values for expense reports

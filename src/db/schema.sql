@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted')),
+    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted', 'paid')),
     -- Organizational context
     department_id UUID REFERENCES departments(id),
     department_name VARCHAR(255),  -- Denormalized
@@ -258,6 +258,12 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     submitted_at TIMESTAMP WITH TIME ZONE,
     approved_at TIMESTAMP WITH TIME ZONE,
     posted_at TIMESTAMP WITH TIME ZONE,
+    paid_at TIMESTAMP WITH TIME ZONE,
+    paid_by VARCHAR(255),
+    exchange_rate DECIMAL(10,6) DEFAULT 1.0,
+    base_currency_total DECIMAL(12,2),
+    submission_comment TEXT,
+    rejection_reason TEXT,
     -- LLM: Pre-computed analytics
     processing_time_hours DECIMAL(10,2),  -- Time from submit to approve
     is_over_budget BOOLEAN DEFAULT false,
@@ -330,6 +336,17 @@ CREATE TABLE IF NOT EXISTS expense_lines (
     merchant_category VARCHAR(100),  -- MCC category if from card data
     location_city VARCHAR(100),
     location_country VARCHAR(3),
+    -- Reimbursement and expense classification
+    is_business_expense BOOLEAN DEFAULT false,
+    is_reimbursable BOOLEAN DEFAULT false,
+    reimbursement_status VARCHAR(50) DEFAULT 'not_applicable' CHECK (reimbursement_status IN ('not_applicable', 'pending', 'submitted', 'approved', 'rejected', 'paid')),
+    -- Tax
+    tax_amount DECIMAL(12,2) DEFAULT 0,
+    tax_rate DECIMAL(5,4) DEFAULT 0,
+    -- Notes and location
+    notes TEXT,
+    latitude DECIMAL(10,7),
+    longitude DECIMAL(10,7),
     -- Payment method (LLM: "show me all corporate card expenses")
     payment_method VARCHAR(50) CHECK (payment_method IN ('corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other')),
     -- Project association (denormalized from report for flat queries)
