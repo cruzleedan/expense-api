@@ -6,6 +6,8 @@ export const ExpenseReportStatusSchema = z.enum(['draft', 'pending', 'submitted'
 export const ExpenseReportSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
+  clientId: z.string().max(36).nullable(),
+  version: z.number().int(),
   title: z.string(),
   reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   totalAmount: z.number(),
@@ -30,9 +32,14 @@ export const ExpenseReportSchema = z.object({
   baseCurrencyTotal: z.number().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  deletedAt: z.string().datetime().nullable(),
 }).openapi('ExpenseReport');
 
 export const CreateExpenseReportSchema = z.object({
+  clientId: z.string().max(36).optional().openapi({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    description: 'Client-generated UUID. Used for idempotent creates — re-submitting the same clientId returns the existing record.',
+  }),
   title: z.string().min(1).max(255).openapi({ example: 'Business Trip Q1' }),
   description: z.string().max(5000).optional().openapi({ example: 'Travel expenses for client meetings' }),
   reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).openapi({ example: '2024-03-31' }),
@@ -80,6 +87,12 @@ export const ExpenseReportListQuerySchema = z.object({
   search: z.string().max(255).optional().openapi({ example: 'quarterly', description: 'Search in title and description' }),
   sortBy: ExpenseReportSortBySchema.optional().openapi({ example: 'createdAt', description: 'Field to sort by' }),
   sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),
+  // Incremental sync: only return reports modified after this timestamp.
+  // Include soft-deleted tombstones so clients can clean up local records.
+  updatedSince: z.string().datetime().optional().openapi({
+    example: '2026-03-01T00:00:00.000Z',
+    description: 'ISO 8601 timestamp. Returns only records updated after this time, including deleted tombstones.',
+  }),
 });
 
 export const ExpenseReportListResponseSchema = z.object({

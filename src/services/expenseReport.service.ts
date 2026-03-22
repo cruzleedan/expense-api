@@ -13,6 +13,7 @@ import { buildUpdateFields } from '../utils/caseTransform.js';
 import { canAccessReport } from './approval.service.js';
 
 export interface CreateExpenseReportInput {
+  clientId?: string;
   title: string;
   description?: string;
   reportDate?: string;
@@ -54,9 +55,19 @@ export async function createExpenseReport(
   userId: string,
   input: CreateExpenseReportInput
 ): Promise<ExpenseReport> {
+  // Idempotent create: if a row with the same client_id already exists for this user, return it.
+  if (input.clientId) {
+    const existing = await query<ExpenseReport>(
+      `SELECT *, deleted_at FROM expense_reports WHERE client_id = $1 AND user_id = $2 LIMIT 1`,
+      [input.clientId, userId]
+    );
+    if (existing.rows.length > 0) return existing.rows[0];
+  }
+
   const result = await query<ExpenseReport>(
     `INSERT INTO expense_reports (
       user_id,
+      client_id,
       title,
       description,
       report_date,
@@ -71,10 +82,11 @@ export async function createExpenseReport(
       exchange_rate,
       base_currency_total
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-    RETURNING *`,
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    RETURNING *, deleted_at`,
     [
       userId,
+      input.clientId ?? null,
       input.title,
       input.description ?? null,
       input.reportDate ?? null,
@@ -103,6 +115,7 @@ export async function getExpenseReportById(
     `SELECT
       id,
       user_id,
+      client_id,
       title,
       description,
       status,
@@ -123,7 +136,8 @@ export async function getExpenseReportById(
       posted_at,
       version,
       created_at,
-      updated_at
+      updated_at,
+      deleted_at
     FROM expense_reports
     WHERE id = $1`,
     [reportId]
@@ -154,34 +168,47 @@ export async function getExpenseReportById(
 export async function listExpenseReports(
   userId: string,
   params: PaginationParams,
-  status?: string
+  status?: string,
+  updatedSince?: string
 ): Promise<{ reports: ExpenseReport[]; total: number }> {
   const offset = getOffset(params);
+
+  // Incremental sync: include ALL rows (including soft-deleted tombstones) modified
+  // after updatedSince. Status and search filters are ignored — client needs the full delta.
+  const isIncrementalSync = !!updatedSince;
+
   const conditions = ['user_id = $1'];
   const values: unknown[] = [userId];
   let paramIndex = 2;
 
-  if (status) {
-    conditions.push(`status = $${paramIndex}`);
-    values.push(status);
+  if (isIncrementalSync) {
+    conditions.push(`updated_at > $${paramIndex}`);
+    values.push(updatedSince);
     paramIndex++;
-  }
+  } else {
+    // Normal list: hide soft-deleted rows
+    conditions.push('deleted_at IS NULL');
 
-  // Add search condition if provided
-  const searchCondition = buildSearchCondition(
-    params.search,
-    EXPENSE_REPORT_SEARCHABLE_FIELDS,
-    paramIndex
-  );
-  if (searchCondition) {
-    conditions.push(searchCondition.condition);
-    values.push(searchCondition.value);
-    paramIndex = searchCondition.nextParamIndex;
+    if (status) {
+      conditions.push(`status = $${paramIndex}`);
+      values.push(status);
+      paramIndex++;
+    }
+
+    const searchCondition = buildSearchCondition(
+      params.search,
+      EXPENSE_REPORT_SEARCHABLE_FIELDS,
+      paramIndex
+    );
+    if (searchCondition) {
+      conditions.push(searchCondition.condition);
+      values.push(searchCondition.value);
+      paramIndex = searchCondition.nextParamIndex;
+    }
   }
 
   const whereClause = conditions.join(' AND ');
 
-  // Build ORDER BY clause with allowed fields, default to created_at DESC
   const orderBy = buildOrderByClause(
     params,
     EXPENSE_REPORT_SORTABLE_FIELDS,
@@ -190,7 +217,7 @@ export async function listExpenseReports(
 
   const [dataResult, countResult] = await Promise.all([
     query<ExpenseReport>(
-      `SELECT * FROM expense_reports WHERE ${whereClause}
+      `SELECT *, deleted_at FROM expense_reports WHERE ${whereClause}
        ORDER BY ${orderBy}
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...values, params.limit, offset]
@@ -242,12 +269,15 @@ export async function updateExpenseReport(
     return getExpenseReportById(reportId, userId, permissions);
   }
 
+  // Always increment version on every update for optimistic concurrency.
+  updates.push(`version = version + 1`);
   values.push(reportId);
 
   const result = await query<ExpenseReport>(
     `UPDATE expense_reports SET ${updates.join(', ')}
      WHERE id = $${nextIndex}
-     RETURNING *`,
+     RETURNING *, deleted_at`,
+
     values
   );
 
@@ -262,7 +292,13 @@ export async function deleteExpenseReport(
   // Check ownership/access
   await getExpenseReportById(reportId, userId, permissions);
 
-  await query('DELETE FROM expense_reports WHERE id = $1', [reportId]);
+  // Soft delete: stamp deleted_at so clients can detect the tombstone on next incremental sync.
+  await query(
+    `UPDATE expense_reports
+     SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
+     WHERE id = $1`,
+    [reportId]
+  );
 }
 
 // Helper to verify report ownership (used by other services)

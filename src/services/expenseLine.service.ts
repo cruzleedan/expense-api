@@ -14,6 +14,7 @@ import {
 } from '../utils/pagination.js';
 
 export interface CreateExpenseLineInput {
+  clientId?: string;
   description: string;
   amount: number;
   currency?: string;
@@ -81,9 +82,25 @@ export async function createExpenseLine(
   // Verify user owns the report
   await verifyReportOwnership(reportId, userId);
 
+  // Idempotent create: if a row with the same client_id already exists, return it.
+  if (input.clientId) {
+    const existing = await query<ExpenseLine>(
+      `SELECT el.*, er.user_id, el.deleted_at
+       FROM expense_lines el
+       JOIN expense_reports er ON el.report_id = er.id
+       WHERE el.client_id = $1
+       LIMIT 1`,
+      [input.clientId]
+    );
+    if (existing.rows.length > 0) {
+      const { user_id: _, ...line } = existing.rows[0] as ExpenseLine & { user_id: string };
+      return line as ExpenseLine;
+    }
+  }
+
   const result = await query<ExpenseLine>(
     `INSERT INTO expense_lines (
-      report_id, description, amount, currency, category_code, transaction_date,
+      report_id, client_id, description, amount, currency, category_code, transaction_date,
       merchant_name, location_city, location_country, payment_method,
       original_amount, original_currency,
       is_business_expense, is_reimbursable, reimbursement_status,
@@ -91,10 +108,11 @@ export async function createExpenseLine(
       project_id, project_name, client_name, tags,
       is_recurring, recurrence_pattern, recurrence_merchant
     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
-     RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+     RETURNING *, deleted_at`,
     [
       reportId,
+      input.clientId ?? null,
       input.description,
       input.amount,
       input.currency ?? 'USD',
@@ -135,6 +153,7 @@ export async function getExpenseLineById(
     `SELECT
       el.id,
       el.report_id,
+      el.client_id,
       el.description,
       el.amount,
       el.currency,
@@ -157,8 +176,10 @@ export async function getExpenseLineById(
       el.is_anomaly,
       el.anomaly_score,
       el.anomaly_reasons,
+      el.version,
       el.created_at,
       el.updated_at,
+      el.deleted_at,
       er.user_id
     FROM expense_lines el
     JOIN expense_reports er ON el.report_id = er.id
@@ -212,6 +233,9 @@ export async function listExpenseLines(
 
   const whereClause = conditions.join(' AND ');
 
+  // Only return non-deleted lines in normal list queries
+  const baseWhere = `${whereClause} AND el.deleted_at IS NULL`;
+
   // Build ORDER BY clause with allowed fields, default to transaction_date DESC, created_at DESC
   const orderBy = buildOrderByClause(
     params,
@@ -221,16 +245,16 @@ export async function listExpenseLines(
 
   const [dataResult, countResult] = await Promise.all([
     query<ExpenseLine & { category_code: string | null }>(
-      `SELECT el.*, ec.code AS category_code
+      `SELECT el.*, ec.code AS category_code, el.deleted_at
        FROM expense_lines el
        LEFT JOIN expense_categories ec ON el.category_code = ec.code
-       WHERE ${whereClause.replace(/\b(?<!el\.)report_id\b/, 'el.report_id')}
+       WHERE ${baseWhere.replace(/\b(?<!el\.)report_id\b/, 'el.report_id')}
        ORDER BY ${orderBy.replace(/\b(transaction_date|created_at)\b/g, 'el.$1')}
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...values, params.limit, offset]
     ),
     query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM expense_lines WHERE ${whereClause}`,
+      `SELECT COUNT(*) as count FROM expense_lines WHERE ${baseWhere}`,
       values
     ),
   ]);
@@ -413,12 +437,14 @@ export async function updateExpenseLine(
     return getExpenseLineById(lineId, userId);
   }
 
+  updates.push(`version = version + 1`);
+  updates.push(`updated_at = NOW()`);
   values.push(lineId);
 
   const result = await query<ExpenseLine>(
     `UPDATE expense_lines SET ${updates.join(', ')}
      WHERE id = $${paramIndex}
-     RETURNING *`,
+     RETURNING *, deleted_at`,
     values
   );
 
@@ -432,7 +458,12 @@ export async function deleteExpenseLine(
   // Verify ownership
   await getExpenseLineById(lineId, userId);
 
-  await query('DELETE FROM expense_lines WHERE id = $1', [lineId]);
+  await query(
+    `UPDATE expense_lines
+     SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
+     WHERE id = $1`,
+    [lineId]
+  );
 }
 
 // Helper to verify line belongs to a specific report and user
@@ -449,6 +480,52 @@ export async function verifyLineOwnership(
 
   return line;
 }
+
+// Cross-report sync endpoint: returns all lines (including tombstones) for a user,
+// optionally filtered to records updated after 'updatedSince'.
+export async function listExpenseLinesForSync(
+  userId: string,
+  params: PaginationParams,
+  updatedSince?: string
+): Promise<{ lines: ExpenseLine[]; total: number }> {
+  const values: unknown[] = [userId];
+  let paramIndex = 2;
+  const conditions: string[] = ['er.user_id = $1'];
+
+  if (updatedSince) {
+    conditions.push(`el.updated_at > $${paramIndex}`);
+    values.push(updatedSince);
+    paramIndex++;
+  }
+
+  const whereClause = conditions.join(' AND ');
+  const offset = getOffset(params.page, params.limit);
+
+  const [dataResult, countResult] = await Promise.all([
+    query<ExpenseLine>(
+      `SELECT el.*, el.deleted_at
+       FROM expense_lines el
+       JOIN expense_reports er ON el.report_id = er.id
+       WHERE ${whereClause}
+       ORDER BY el.updated_at DESC
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      [...values, params.limit, offset]
+    ),
+    query<{ count: string }>(
+      `SELECT COUNT(*) as count
+       FROM expense_lines el
+       JOIN expense_reports er ON el.report_id = er.id
+       WHERE ${whereClause}`,
+      values
+    ),
+  ]);
+
+  return {
+    lines: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
+}
+
 
 // Bulk create expense lines with optional receipt associations
 export interface BulkCreateExpenseLineInput {

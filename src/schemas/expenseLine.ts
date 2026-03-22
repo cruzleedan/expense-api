@@ -4,6 +4,8 @@ import { PaginationMetaSchema } from './common.js';
 export const ExpenseLineSchema = z.object({
   id: z.string().uuid(),
   reportId: z.string().uuid(),
+  clientId: z.string().max(36).nullable(),
+  version: z.number().int(),
   description: z.string(),
   amount: z.string(), // DECIMAL comes as string from pg
   currency: z.string(),
@@ -37,9 +39,14 @@ export const ExpenseLineSchema = z.object({
   anomalyReasons: z.array(z.string()).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  deletedAt: z.string().datetime().nullable(),
 }).openapi('ExpenseLine');
 
 export const CreateExpenseLineSchema = z.object({
+  clientId: z.string().max(36).optional().openapi({
+    example: '550e8400-e29b-41d4-a716-446655440001',
+    description: 'Client-generated UUID. Used for idempotent creates — re-submitting the same clientId returns the existing record.',
+  }),
   description: z.string().min(1).max(255).openapi({ example: 'Flight to NYC' }),
   amount: z.number().optional().openapi({ example: 450.00 }),
   currency: z.string().length(3).default('USD').openapi({ example: 'USD' }),
@@ -114,6 +121,16 @@ export const ExpenseLineListResponseSchema = z.object({
   data: z.array(ExpenseLineSchema),
   pagination: PaginationMetaSchema,
 }).openapi('ExpenseLineList');
+
+// Query schema for mobile sync endpoint — returns all user's lines across reports
+export const SyncExpenseLinesQuerySchema = z.object({
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(500)).default('200').openapi({ example: '200' }),
+  updatedSince: z.string().datetime().optional().openapi({
+    example: '2026-03-01T00:00:00.000Z',
+    description: 'ISO 8601 timestamp. Returns only lines updated after this time, including deleted tombstones.',
+  }),
+});
 
 // Bulk create schemas
 export const BulkCreateExpenseLineItemSchema = z.object({

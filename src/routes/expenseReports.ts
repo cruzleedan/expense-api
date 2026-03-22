@@ -65,7 +65,8 @@ expenseReportsRouter.openapi(listRoute, async (c) => {
   const { reports, total } = await listExpenseReports(
     userId,
     paginationParams,
-    query.status
+    query.status,
+    query.updatedSince
   );
 
   return c.json(paginate(reports, total, paginationParams), 200);

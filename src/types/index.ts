@@ -63,8 +63,10 @@ export interface ExpenseReport {
   approved_at: Date | null;
   posted_at: Date | null;
   version: number;
+  client_id: string | null;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
 }
 
 export interface ExpenseCategory {
@@ -112,8 +114,11 @@ export interface ExpenseLine {
   is_anomaly: boolean;
   anomaly_score: number | null;
   anomaly_reasons: string[] | null;
+  client_id: string | null;
+  version: number;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
 }
 
 export interface Receipt {

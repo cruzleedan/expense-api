@@ -9,6 +9,7 @@ import {
   updateExpenseLine,
   deleteExpenseLine,
   bulkCreateExpenseLines,
+  listExpenseLinesForSync,
 } from '../services/expenseLine.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
@@ -19,6 +20,7 @@ import {
   ExpenseLineListQuerySchema,
   BulkCreateExpenseLineSchema,
   BulkCreateExpenseLineResponseSchema,
+  SyncExpenseLinesQuerySchema,
 } from '../schemas/expenseLine.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
 
@@ -316,6 +318,38 @@ expenseLineDirectRouter.openapi(deleteLineRoute, async (c) => {
   await deleteExpenseLine(id, userId);
 
   return c.json({ message: 'Expense line deleted' }, 200);
+});
+
+// Sync endpoint: GET /expense-lines — returns all lines (including tombstones) for the authenticated user
+const syncLinesRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Expense Lines'],
+  summary: 'Sync expense lines',
+  description: 'Returns paginated expense lines (including tombstones) for incremental sync. Use updatedSince for delta sync.',
+  security,
+  request: {
+    query: SyncExpenseLinesQuerySchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Expense lines for sync',
+      content: { 'application/json': { schema: ExpenseLineListResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+expenseLineDirectRouter.openapi(syncLinesRoute, async (c) => {
+  const userId = getUserId(c);
+  const query = c.req.valid('query');
+  const params = { page: query.page, limit: query.limit };
+  const { lines, total } = await listExpenseLinesForSync(userId, params, query.updatedSince);
+  return c.json(paginate(lines, total, params), 200);
 });
 
 export { expenseLinesRouter, expenseLineDirectRouter };

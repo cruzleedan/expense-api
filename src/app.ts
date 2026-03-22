@@ -33,7 +33,7 @@ app.use('*', secureHeaders());
 app.use('*', cors({
   origin: '*', // Configure appropriately for production
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
   exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   maxAge: 86400,
   credentials: true,

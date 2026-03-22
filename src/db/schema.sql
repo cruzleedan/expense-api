@@ -273,8 +273,10 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     -- LLM: Semantic search
     content_embedding vector(768),
     version INTEGER NOT NULL DEFAULT 1,
+    client_id VARCHAR(36),          -- Client-generated UUID for idempotent creates
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE  -- NULL = active; set for soft deletes
 );
 
 -- Approval history for each report
@@ -372,6 +374,10 @@ CREATE TABLE IF NOT EXISTS expense_lines (
     is_anomaly BOOLEAN DEFAULT false,
     anomaly_score DECIMAL(5,4),  -- 0.0000 to 1.0000
     anomaly_reasons TEXT[],  -- ['unusual_amount', 'weekend_expense', 'unusual_category']
+    -- Sync support
+    client_id VARCHAR(36),          -- Client-generated UUID for idempotent creates
+    version INTEGER NOT NULL DEFAULT 1,
+    deleted_at TIMESTAMP WITH TIME ZONE,  -- NULL = active; set for soft deletes
     -- Time dimensions for trend analysis
     fiscal_year INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM transaction_date)) STORED,
     fiscal_quarter INTEGER GENERATED ALWAYS AS (EXTRACT(QUARTER FROM transaction_date)) STORED,
@@ -853,6 +859,8 @@ CREATE INDEX IF NOT EXISTS idx_expense_reports_submitted ON expense_reports(subm
 CREATE INDEX IF NOT EXISTS idx_expense_reports_project ON expense_reports(project_id);
 CREATE INDEX IF NOT EXISTS idx_expense_reports_client ON expense_reports(client_name);
 CREATE INDEX IF NOT EXISTS idx_expense_reports_tags ON expense_reports USING gin(tags);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_reports_client_id ON expense_reports(client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_expense_reports_deleted_at ON expense_reports(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- Expense category indexes
 CREATE INDEX IF NOT EXISTS idx_expense_categories_active ON expense_categories(is_active);
@@ -868,6 +876,9 @@ CREATE INDEX IF NOT EXISTS idx_expense_lines_recurring ON expense_lines(is_recur
     WHERE is_recurring = true;
 CREATE INDEX IF NOT EXISTS idx_expense_lines_recurrence_merchant ON expense_lines(recurrence_merchant, transaction_date DESC)
     WHERE is_recurring = true;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_lines_client_id ON expense_lines(client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_expense_lines_deleted_at ON expense_lines(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_expense_lines_updated_at ON expense_lines(updated_at DESC);
 
 -- Receipt indexes
 CREATE INDEX IF NOT EXISTS idx_receipts_report_id ON receipts(report_id);
