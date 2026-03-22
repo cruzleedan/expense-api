@@ -499,7 +499,7 @@ export async function listExpenseLinesForSync(
   }
 
   const whereClause = conditions.join(' AND ');
-  const offset = getOffset(params.page, params.limit);
+  const offset = getOffset(params.page);
 
   const [dataResult, countResult] = await Promise.all([
     query<ExpenseLine>(
