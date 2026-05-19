@@ -46,12 +46,13 @@ const listAnomaliesRoute = createRoute({
   },
 });
 
-anomaliesRouter.openapi(listAnomaliesRoute, async (c) => {
+const listAnomaliesHandler = async (c) => {
   const userId = c.get('userId');
   const { status, severity, limit, offset } = c.req.valid('query');
   const result = await getAnomaliesForUser(userId, { status, severity, limit, offset });
   return c.json({ data: result.anomalies, total: result.total }, 200);
-});
+};
+anomaliesRouter.openapi(listAnomaliesRoute, listAnomaliesHandler);
 
 // ============================================================================
 // POST /v1/anomalies/:anomalyId/review — Mark as reviewed
@@ -87,13 +88,14 @@ const reviewAnomalyRoute = createRoute({
   },
 });
 
-anomaliesRouter.openapi(reviewAnomalyRoute, async (c) => {
+const reviewAnomalyHandler = async (c) => {
   const userId = c.get('userId');
   const { anomalyId } = c.req.valid('param');
   const { notes } = c.req.valid('json');
   await reviewAnomaly(userId, anomalyId, notes);
   return c.json({ message: 'Anomaly reviewed' }, 200);
-});
+};
+anomaliesRouter.openapi(reviewAnomalyRoute, reviewAnomalyHandler);
 
 // ============================================================================
 // POST /v1/anomalies/:anomalyId/dismiss — Dismiss anomaly
@@ -126,11 +128,12 @@ const dismissAnomalyRoute = createRoute({
   },
 });
 
-anomaliesRouter.openapi(dismissAnomalyRoute, async (c) => {
+const dismissAnomalyHandler = async (c) => {
   const userId = c.get('userId');
   const { anomalyId } = c.req.valid('param');
   await dismissAnomaly(userId, anomalyId);
   return c.json({ message: 'Anomaly dismissed' }, 200);
-});
+};
+anomaliesRouter.openapi(dismissAnomalyRoute, dismissAnomalyHandler);
 
 export { anomaliesRouter };

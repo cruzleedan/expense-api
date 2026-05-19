@@ -3,7 +3,6 @@ import { logger } from '../utils/logger.js';
 import type {
   WorkflowDefinition,
   WorkflowStep,
-  WorkflowAssignment,
   ExpenseReport,
   ApprovalHistory,
 } from '../types/index.js';
@@ -50,11 +49,11 @@ export async function getWorkflowById(workflowId: string): Promise<WorkflowDefin
 /**
  * Parse workflow row from database (JSON fields)
  */
-function parseWorkflowRow(row: Record<string, unknown>): WorkflowDefinition {
+function parseWorkflowRow(row: WorkflowDefinition): WorkflowDefinition {
   return {
     ...row,
-    conditions: typeof row.conditions === 'string' ? JSON.parse(row.conditions) : row.conditions,
-    steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps,
+    conditions: typeof row.conditions === 'string' ? JSON.parse(row.conditions as unknown as string) : row.conditions,
+    steps: typeof row.steps === 'string' ? JSON.parse(row.steps as unknown as string) : row.steps,
   } as WorkflowDefinition;
 }
 
@@ -138,7 +137,7 @@ export async function findWorkflowForReport(
   report: Pick<ExpenseReport, 'department_id' | 'total_amount'>,
   expenseCategory?: string
 ): Promise<WorkflowDefinition | null> {
-  const amount = report.total_amount ? parseFloat(report.total_amount) : 0;
+  const amount = report.total_amount ?? 0;
 
   // Find matching workflow assignment by priority
   const assignmentResult = await db.query<{ workflow_id: string }>(
@@ -216,7 +215,7 @@ export async function submitReport(
       `SELECT COALESCE(SUM(amount), 0) as total FROM expense_lines WHERE report_id = $1`,
       [reportId]
     );
-    const totalAmount = totalResult.rows[0].total;
+    const totalAmount = parseFloat(totalResult.rows[0].total);
 
     // Find appropriate workflow
     const workflow = await findWorkflowForReport({
@@ -811,7 +810,7 @@ function evaluateCondition(
   condition: { field: string; condition: string; value: unknown },
   report: ExpenseReport
 ): boolean {
-  const fieldValue = (report as Record<string, unknown>)[condition.field];
+  const fieldValue = (report as unknown as Record<string, unknown>)[condition.field];
 
   switch (condition.condition) {
     case 'greater_than':

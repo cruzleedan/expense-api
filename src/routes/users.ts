@@ -71,7 +71,7 @@ const listRoute = createRoute({
   },
 });
 
-usersRouter.openapi(listRoute, async (c) => {
+const listHandler = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -93,7 +93,8 @@ usersRouter.openapi(listRoute, async (c) => {
   }));
 
   return c.json(paginate(formattedUsers, total, paginationParams), 200);
-});
+};
+usersRouter.openapi(listRoute, listHandler);
 
 // Create user
 const createRoute_ = createRoute({
@@ -129,14 +130,15 @@ const createRoute_ = createRoute({
   },
 });
 
-usersRouter.openapi(createRoute_, async (c) => {
+const createHandler = async (c) => {
   const input = c.req.valid('json');
 
   const user = await createUser(input);
   const roles = await getUserRolesById(user.id);
 
   return c.json({ ...user, roles: formatUserRoles(roles) }, 201);
-});
+};
+usersRouter.openapi(createRoute_, createHandler);
 
 // Get user by ID
 const getRoute = createRoute({
@@ -166,13 +168,14 @@ const getRoute = createRoute({
   },
 });
 
-usersRouter.openapi(getRoute, async (c) => {
+const getHandler = async (c) => {
   const { id } = c.req.valid('param');
 
   const user = await getUserWithRoles(id);
 
   return c.json({ ...user, roles: formatUserRoles(user.roles) }, 200);
-});
+};
+usersRouter.openapi(getRoute, getHandler);
 
 // Update user
 const updateRoute = createRoute({
@@ -213,7 +216,7 @@ const updateRoute = createRoute({
   },
 });
 
-usersRouter.openapi(updateRoute, async (c) => {
+const updateHandler = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
@@ -221,7 +224,8 @@ usersRouter.openapi(updateRoute, async (c) => {
   const roles = await getUserRolesById(id);
 
   return c.json({ ...user, roles: formatUserRoles(roles) }, 200);
-});
+};
+usersRouter.openapi(updateRoute, updateHandler);
 
 // Delete user
 const deleteRoute = createRoute({
@@ -255,13 +259,14 @@ const deleteRoute = createRoute({
   },
 });
 
-usersRouter.openapi(deleteRoute, async (c) => {
+const deleteHandler = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteUser(id);
 
   return c.json({ message: 'User deleted' }, 200);
-});
+};
+usersRouter.openapi(deleteRoute, deleteHandler);
 
 // ============================================================================
 // USER ROLES ENDPOINTS
@@ -295,13 +300,14 @@ const getUserRolesRoute = createRoute({
   },
 });
 
-usersRouter.openapi(getUserRolesRoute, async (c) => {
+const getUserRolesHandler = async (c) => {
   const { id } = c.req.valid('param');
 
   const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) }, 200);
-});
+};
+usersRouter.openapi(getUserRolesRoute, getUserRolesHandler);
 
 // Set user's roles (replace all)
 const setUserRolesRoute = createRoute({
@@ -338,7 +344,7 @@ const setUserRolesRoute = createRoute({
   },
 });
 
-usersRouter.openapi(setUserRolesRoute, async (c) => {
+const setUserRolesHandler = async (c) => {
   const { id } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
   const assignedBy = getUserId(c);
@@ -346,7 +352,8 @@ usersRouter.openapi(setUserRolesRoute, async (c) => {
   const roles = await setUserRolesById(id, roleIds, assignedBy);
 
   return c.json({ roles: formatUserRoles(roles) }, 200);
-});
+};
+usersRouter.openapi(setUserRolesRoute, setUserRolesHandler);
 
 // Add a role to user
 const addUserRoleRoute = createRoute({
@@ -387,7 +394,7 @@ const addUserRoleRoute = createRoute({
   },
 });
 
-usersRouter.openapi(addUserRoleRoute, async (c) => {
+const addUserRoleHandler = async (c) => {
   const { id } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
   const assignedBy = getUserId(c);
@@ -395,7 +402,8 @@ usersRouter.openapi(addUserRoleRoute, async (c) => {
   const roles = await addUserRole(id, roleId, assignedBy);
 
   return c.json({ roles: formatUserRoles(roles) }, 200);
-});
+};
+usersRouter.openapi(addUserRoleRoute, addUserRoleHandler);
 
 // Remove a role from user
 const removeUserRoleRoute = createRoute({
@@ -425,12 +433,13 @@ const removeUserRoleRoute = createRoute({
   },
 });
 
-usersRouter.openapi(removeUserRoleRoute, async (c) => {
+const removeUserRoleHandler = async (c) => {
   const { id, roleId } = c.req.valid('param');
 
   const roles = await removeUserRole(id, roleId);
 
   return c.json({ roles: formatUserRoles(roles) }, 200);
-});
+};
+usersRouter.openapi(removeUserRoleRoute, removeUserRoleHandler);
 
 export { usersRouter };

@@ -13,7 +13,7 @@ services:
       - DATABASE_URL=postgresql://expense_user:expense_pass@postgres:5432/expense_db
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - UPLOAD_DIR=/app/uploads
-      - RECEIPT_PARSER_URL=http://receipt-parser-app:3000
+      - RECEIPT_PARSER_URL=http://receipt-parser-app:8000
       # OAuth credentials
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
@@ -36,7 +36,7 @@ services:
           memory: 512M
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       - POSTGRES_USER=expense_user
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -51,7 +51,6 @@ services:
       retries: 5
     networks:
       - expense-network
-      - caddy-network
     restart: unless-stopped
     deploy:
       resources:
@@ -67,3 +66,6 @@ networks:
     driver: bridge
   caddy-network:
     external: true
+  shared-ollama-network:
+    external: true
+    name: shared-ollama-network

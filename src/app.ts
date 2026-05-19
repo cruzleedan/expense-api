@@ -127,6 +127,7 @@ app.doc('/openapi.json', {
     { name: 'Admin Analytics', description: 'Admin analytics dashboard for LLM usage and org-wide metrics' },
   ],
   security: [{ Bearer: [] }],
+  // @ts-expect-error @hono/zod-openapi omits `components` from its doc type but passes it through to the OpenAPI spec at runtime
   components: {
     securitySchemes: {
       Bearer: {

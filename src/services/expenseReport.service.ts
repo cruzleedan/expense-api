@@ -1,16 +1,14 @@
-import { query } from '../db/client.js';
-import type { ExpenseReport } from '../types/index.js';
+import { db } from '../db/drizzle.js';
+import { expenseReports, users, userRoles, rolePermissions, permissions } from '../db/schema.js';
+import type { ExpenseReport } from '../db/schema.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
 import {
-  getOffset,
-  buildOrderByClause,
-  buildSearchCondition,
-  EXPENSE_REPORT_SORTABLE_FIELDS,
-  EXPENSE_REPORT_SEARCHABLE_FIELDS,
-  type PaginationParams,
-} from '../utils/pagination.js';
-import { buildUpdateFields } from '../utils/caseTransform.js';
+  eq, and, or, ilike, asc, desc, count, gt, isNull, sql, type SQL,
+} from 'drizzle-orm';
+import { getOffset, type PaginationParams } from '../utils/pagination.js';
 import { canAccessReport } from './approval.service.js';
+
+export type { ExpenseReport };
 
 export interface CreateExpenseReportInput {
   clientId?: string;
@@ -20,7 +18,6 @@ export interface CreateExpenseReportInput {
   totalAmount?: number;
   netAmount?: number;
   currency?: string;
-  // v5.0 fields
   projectId?: string;
   projectName?: string;
   clientName?: string;
@@ -33,131 +30,84 @@ export interface CreateExpenseReportInput {
 export interface UpdateExpenseReportInput {
   title?: string;
   description?: string;
+  status?: string;
   reportDate?: string;
-  status?: 'draft' | 'pending' | 'submitted' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
   totalAmount?: number;
   netAmount?: number;
   currency?: string;
-  // v5.0 fields
-  projectId?: string;
-  projectName?: string;
-  clientName?: string;
-  tags?: string[];
-  submissionComment?: string;
-  rejectionReason?: string;
-  paidAt?: string;
-  paidBy?: string;
-  exchangeRate?: number;
-  baseCurrencyTotal?: number;
+  projectId?: string | null;
+  projectName?: string | null;
+  clientName?: string | null;
+  tags?: string[] | null;
+  submissionComment?: string | null;
+  rejectionReason?: string | null;
+  paidAt?: string | null;
+  paidBy?: string | null;
+  exchangeRate?: number | null;
+  baseCurrencyTotal?: number | null;
 }
 
 export async function createExpenseReport(
   userId: string,
   input: CreateExpenseReportInput
 ): Promise<ExpenseReport> {
-  // Idempotent create: if a row with the same client_id already exists for this user, return it.
+  // Idempotent create
   if (input.clientId) {
-    const existing = await query<ExpenseReport>(
-      `SELECT *, deleted_at FROM expense_reports WHERE client_id = $1 AND user_id = $2 LIMIT 1`,
-      [input.clientId, userId]
-    );
-    if (existing.rows.length > 0) return existing.rows[0];
+    const [existing] = await db
+      .select()
+      .from(expenseReports)
+      .where(eq(expenseReports.clientId, input.clientId))
+      .limit(1);
+    if (existing) return existing;
   }
 
-  const result = await query<ExpenseReport>(
-    `INSERT INTO expense_reports (
-      user_id,
-      client_id,
-      title,
-      description,
-      report_date,
-      total_amount,
-      net_amount,
-      currency,
-      project_id,
-      project_name,
-      client_name,
-      tags,
-      submission_comment,
-      exchange_rate,
-      base_currency_total
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    RETURNING *, deleted_at`,
-    [
+  const today = new Date().toISOString().slice(0, 10);
+  const [result] = await db
+    .insert(expenseReports)
+    .values({
       userId,
-      input.clientId ?? null,
-      input.title,
-      input.description ?? null,
-      input.reportDate ?? null,
-      input.totalAmount ?? 0,
-      input.netAmount ?? 0,
-      input.currency ?? null,
-      input.projectId ?? null,
-      input.projectName ?? null,
-      input.clientName ?? null,
-      input.tags ?? null,
-      input.submissionComment ?? null,
-      input.exchangeRate ?? 1.0,
-      input.baseCurrencyTotal ?? null
-    ]
-  );
+      clientId: input.clientId ?? null,
+      title: input.title,
+      description: input.description ?? null,
+      reportDate: input.reportDate ?? today,
+      totalAmount: input.totalAmount ?? 0,
+      netAmount: input.netAmount ?? 0,
+      currency: input.currency ?? 'USD',
+      projectId: input.projectId ?? null,
+      projectName: input.projectName ?? null,
+      clientName: input.clientName ?? null,
+      tags: input.tags ?? null,
+      submissionComment: input.submissionComment ?? null,
+      exchangeRate: input.exchangeRate ?? 1.0,
+      baseCurrencyTotal: input.baseCurrencyTotal ?? null,
+    })
+    .returning();
 
-  return result.rows[0];
+  return result;
 }
 
 export async function getExpenseReportById(
   reportId: string,
   userId: string,
-  permissions: string[] = []
+  permissions_: string[] = []
 ): Promise<ExpenseReport> {
-  const result = await query<ExpenseReport>(
-    `SELECT
-      id,
-      user_id,
-      client_id,
-      title,
-      description,
-      status,
-      department_id,
-      cost_center,
-      project_id,
-      project_name,
-      client_name,
-      tags,
-      total_amount,
-      currency,
-      workflow_id,
-      workflow_snapshot,
-      current_step,
-      TO_CHAR(report_date, 'YYYY-MM-DD') AS report_date,
-      submitted_at,
-      approved_at,
-      posted_at,
-      version,
-      created_at,
-      updated_at,
-      deleted_at
-    FROM expense_reports
-    WHERE id = $1`,
-    [reportId]
-  );
+  const [report] = await db
+    .select()
+    .from(expenseReports)
+    .where(eq(expenseReports.id, reportId))
+    .limit(1);
 
-  if (result.rows.length === 0) {
+  if (!report) {
     throw new NotFoundError('Expense report');
   }
 
-  const report = result.rows[0];
-
-  // Use permission-based access control if permissions are provided
-  if (permissions.length > 0) {
-    const accessCheck = await canAccessReport(userId, reportId, permissions);
+  if (permissions_.length > 0) {
+    const accessCheck = await canAccessReport(userId, reportId, permissions_);
     if (!accessCheck.allowed) {
-      throw new ForbiddenError(accessCheck.reason || 'Access denied to this expense report');
+      throw new ForbiddenError(accessCheck.reason ?? 'Access denied to this expense report');
     }
   } else {
-    // Fallback to simple ownership check for backward compatibility
-    if (report.user_id !== userId) {
+    if (report.userId !== userId) {
       throw new ForbiddenError('Access denied to this expense report');
     }
   }
@@ -171,157 +121,129 @@ export async function listExpenseReports(
   status?: string,
   updatedSince?: string
 ): Promise<{ reports: ExpenseReport[]; total: number }> {
-  const offset = getOffset(params);
-
-  // Incremental sync: include ALL rows (including soft-deleted tombstones) modified
-  // after updatedSince. Status and search filters are ignored — client needs the full delta.
   const isIncrementalSync = !!updatedSince;
 
-  const conditions = ['user_id = $1'];
-  const values: unknown[] = [userId];
-  let paramIndex = 2;
+  const conditions: (SQL | undefined)[] = [eq(expenseReports.userId, userId)];
 
   if (isIncrementalSync) {
-    conditions.push(`updated_at > $${paramIndex}`);
-    values.push(updatedSince);
-    paramIndex++;
+    conditions.push(gt(expenseReports.updatedAt, updatedSince!));
   } else {
-    // Normal list: hide soft-deleted rows
-    conditions.push('deleted_at IS NULL');
-
-    if (status) {
-      conditions.push(`status = $${paramIndex}`);
-      values.push(status);
-      paramIndex++;
-    }
-
-    const searchCondition = buildSearchCondition(
-      params.search,
-      EXPENSE_REPORT_SEARCHABLE_FIELDS,
-      paramIndex
-    );
-    if (searchCondition) {
-      conditions.push(searchCondition.condition);
-      values.push(searchCondition.value);
-      paramIndex = searchCondition.nextParamIndex;
+    conditions.push(isNull(expenseReports.deletedAt));
+    if (status) conditions.push(eq(expenseReports.status, status));
+    if (params.search) {
+      conditions.push(
+        or(
+          ilike(expenseReports.title, `%${params.search}%`),
+          ilike(expenseReports.description, `%${params.search}%`)
+        )
+      );
     }
   }
 
-  const whereClause = conditions.join(' AND ');
+  const where = and(...(conditions.filter(Boolean) as SQL[]));
 
-  const orderBy = buildOrderByClause(
-    params,
-    EXPENSE_REPORT_SORTABLE_FIELDS,
-    'created_at DESC'
-  );
+  const sortColMap = {
+    title: expenseReports.title,
+    status: expenseReports.status,
+    totalAmount: expenseReports.totalAmount,
+    reportDate: expenseReports.reportDate,
+    createdAt: expenseReports.createdAt,
+    updatedAt: expenseReports.updatedAt,
+    submittedAt: expenseReports.submittedAt,
+  };
+  const sortCol =
+    params.sortBy && params.sortBy in sortColMap
+      ? sortColMap[params.sortBy as keyof typeof sortColMap]
+      : expenseReports.createdAt;
+  const orderExpr = params.sortOrder === 'desc' ? desc(sortCol) : asc(sortCol);
 
-  const [dataResult, countResult] = await Promise.all([
-    query<ExpenseReport>(
-      `SELECT *, deleted_at FROM expense_reports WHERE ${whereClause}
-       ORDER BY ${orderBy}
-       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-      [...values, params.limit, offset]
-    ),
-    query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM expense_reports WHERE ${whereClause}`,
-      values
-    ),
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(expenseReports)
+      .where(where)
+      .orderBy(orderExpr)
+      .limit(params.limit)
+      .offset(getOffset(params)),
+    db.select({ total: count() }).from(expenseReports).where(where),
   ]);
 
-  return {
-    reports: dataResult.rows,
-    total: parseInt(countResult.rows[0].count, 10),
-  };
+  return { reports: rows, total };
 }
 
 export async function updateExpenseReport(
   reportId: string,
   userId: string,
   input: UpdateExpenseReportInput,
-  permissions: string[] = []
+  permissions_: string[] = []
 ): Promise<ExpenseReport> {
-  // First check ownership/access
-  await getExpenseReportById(reportId, userId, permissions);
+  await getExpenseReportById(reportId, userId, permissions_);
 
-  const fieldMap = {
-    title: 'title',
-    description: 'description',
-    status: 'status',
-    reportDate: 'report_date',
-    totalAmount: 'total_amount',
-    netAmount: 'net_amount',
-    currency: 'currency',
-    projectId: 'project_id',
-    projectName: 'project_name',
-    clientName: 'client_name',
-    tags: 'tags',
-    submissionComment: 'submission_comment',
-    rejectionReason: 'rejection_reason',
-    paidAt: 'paid_at',
-    paidBy: 'paid_by',
-    exchangeRate: 'exchange_rate',
-    baseCurrencyTotal: 'base_currency_total',
-  } as const;
+  const updates: Partial<typeof expenseReports.$inferInsert> = {};
+  if (input.title !== undefined) updates.title = input.title;
+  if (input.description !== undefined) updates.description = input.description;
+  if (input.status !== undefined) updates.status = input.status;
+  if (input.reportDate !== undefined) updates.reportDate = input.reportDate;
+  if (input.totalAmount !== undefined) updates.totalAmount = input.totalAmount;
+  if (input.netAmount !== undefined) updates.netAmount = input.netAmount;
+  if (input.currency !== undefined) updates.currency = input.currency;
+  if (input.projectId !== undefined) updates.projectId = input.projectId;
+  if (input.projectName !== undefined) updates.projectName = input.projectName;
+  if (input.clientName !== undefined) updates.clientName = input.clientName;
+  if (input.tags !== undefined) updates.tags = input.tags;
+  if (input.submissionComment !== undefined) updates.submissionComment = input.submissionComment;
+  if (input.rejectionReason !== undefined) updates.rejectionReason = input.rejectionReason;
+  if (input.paidAt !== undefined) updates.paidAt = input.paidAt;
+  if (input.paidBy !== undefined) updates.paidBy = input.paidBy;
+  if (input.exchangeRate !== undefined) updates.exchangeRate = input.exchangeRate;
+  if (input.baseCurrencyTotal !== undefined) updates.baseCurrencyTotal = input.baseCurrencyTotal;
 
-  const { updates, values, nextIndex } = buildUpdateFields(input, fieldMap);
-
-  if (updates.length === 0) {
-    return getExpenseReportById(reportId, userId, permissions);
+  if (Object.keys(updates).length === 0) {
+    return getExpenseReportById(reportId, userId, permissions_);
   }
 
-  // Always increment version on every update for optimistic concurrency.
-  updates.push(`version = version + 1`);
-  values.push(reportId);
+  const [result] = await db
+    .update(expenseReports)
+    .set({ ...updates, version: sql`version + 1` })
+    .where(eq(expenseReports.id, reportId))
+    .returning();
 
-  const result = await query<ExpenseReport>(
-    `UPDATE expense_reports SET ${updates.join(', ')}
-     WHERE id = $${nextIndex}
-     RETURNING *, deleted_at`,
-
-    values
-  );
-
-  return result.rows[0];
+  return result;
 }
 
 export async function deleteExpenseReport(
   reportId: string,
   userId: string,
-  permissions: string[] = []
+  permissions_: string[] = []
 ): Promise<void> {
-  // Check ownership/access
-  await getExpenseReportById(reportId, userId, permissions);
+  await getExpenseReportById(reportId, userId, permissions_);
 
-  // Soft delete: stamp deleted_at so clients can detect the tombstone on next incremental sync.
-  await query(
-    `UPDATE expense_reports
-     SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
-     WHERE id = $1`,
-    [reportId]
-  );
+  await db
+    .update(expenseReports)
+    .set({
+      deletedAt: sql`NOW()`,
+      updatedAt: sql`NOW()`,
+      version: sql`version + 1`,
+    })
+    .where(eq(expenseReports.id, reportId));
 }
 
-// Helper to verify report ownership (used by other services)
 export async function verifyReportOwnership(
   reportId: string,
   userId: string,
-  permissions?: string[]
+  userPermissions?: string[]
 ): Promise<ExpenseReport> {
-  // If permissions are not provided, fetch them from the database
-  let userPermissions = permissions;
-  if (!userPermissions || userPermissions.length === 0) {
-    const userResult = await query<{ permission_name: string }>(
-      `SELECT DISTINCT p.name as permission_name
-       FROM users u
-       JOIN user_roles ur ON u.id = ur.user_id
-       JOIN role_permissions rp ON ur.role_id = rp.role_id
-       JOIN permissions p ON rp.permission_id = p.id
-       WHERE u.id = $1`,
-      [userId]
-    );
-
-    userPermissions = userResult.rows.map((row: { permission_name: string }) => row.permission_name);
+  let perms = userPermissions;
+  if (!perms || perms.length === 0) {
+    const rows = await db
+      .selectDistinct({ name: permissions.name })
+      .from(users)
+      .innerJoin(userRoles, eq(users.id, userRoles.userId))
+      .innerJoin(rolePermissions, eq(userRoles.roleId, rolePermissions.roleId))
+      .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+      .where(eq(users.id, userId));
+    perms = rows.map((r) => r.name);
   }
 
-  return getExpenseReportById(reportId, userId, userPermissions);
+  return getExpenseReportById(reportId, userId, perms);
 }

@@ -53,7 +53,7 @@ const listRoute = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(listRoute, async (c) => {
+const listHandler = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -73,7 +73,8 @@ expensePoliciesRouter.openapi(listRoute, async (c) => {
   const { policies, total } = await listExpensePolicies(paginationParams, filters);
 
   return c.json(paginate(policies, total, paginationParams), 200);
-});
+};
+expensePoliciesRouter.openapi(listRoute, listHandler);
 
 // Check policies for an expense
 const checkRoute = createRoute({
@@ -101,14 +102,15 @@ const checkRoute = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(checkRoute, async (c) => {
+const checkHandler = async (c) => {
   const context = c.req.valid('json');
 
   const violations = await checkPoliciesForExpense(context);
   const hasHardBlock = violations.some(v => v.severity === 'hard_block');
 
   return c.json({ violations, hasHardBlock }, 200);
-});
+};
+expensePoliciesRouter.openapi(checkRoute, checkHandler);
 
 // Create expense policy
 const createRoute_ = createRoute({
@@ -145,14 +147,15 @@ const createRoute_ = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(createRoute_, async (c) => {
+const createHandler = async (c) => {
   const userId = getUserId(c);
   const input = c.req.valid('json');
 
   const policy = await createExpensePolicy(input, userId);
 
   return c.json(policy, 201);
-});
+};
+expensePoliciesRouter.openapi(createRoute_, createHandler);
 
 // Get expense policy by ID
 const getRoute = createRoute({
@@ -182,13 +185,14 @@ const getRoute = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(getRoute, async (c) => {
+const getHandler = async (c) => {
   const { id } = c.req.valid('param');
 
   const policy = await getExpensePolicyById(id);
 
   return c.json(policy, 200);
-});
+};
+expensePoliciesRouter.openapi(getRoute, getHandler);
 
 // Update expense policy
 const updateRoute = createRoute({
@@ -230,14 +234,15 @@ const updateRoute = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(updateRoute, async (c) => {
+const updateHandler = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   const policy = await updateExpensePolicy(id, input);
 
   return c.json(policy, 200);
-});
+};
+expensePoliciesRouter.openapi(updateRoute, updateHandler);
 
 // Delete expense policy
 const deleteRoute = createRoute({
@@ -268,12 +273,13 @@ const deleteRoute = createRoute({
   },
 });
 
-expensePoliciesRouter.openapi(deleteRoute, async (c) => {
+const deleteHandler = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteExpensePolicy(id);
 
   return c.json({ message: 'Policy deleted' }, 200);
-});
+};
+expensePoliciesRouter.openapi(deleteRoute, deleteHandler);
 
 export { expensePoliciesRouter };

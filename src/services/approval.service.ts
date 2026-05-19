@@ -1,6 +1,6 @@
-import { db } from '../db/client.js';
+import { db, query } from '../db/client.js';
 import { logger } from '../utils/logger.js';
-import type { SelfApprovalCheckResult, ExpenseReport, ApprovalHistory } from '../types/index.js';
+import type { SelfApprovalCheckResult, ApprovalHistory } from '../types/index.js';
 
 /**
  * Approval Service
@@ -249,10 +249,9 @@ export async function recordApprovalAction(
   rejectionCategory?: string,
   slaDeadline?: Date,
   wasEscalated?: boolean,
-  client?: any // Optional transaction client
+  client?: { query: typeof query } // Optional transaction client
 ): Promise<ApprovalHistory> {
-  // Use provided client or default to db.query
-  const queryFn = client ? client.query.bind(client) : db.query.bind(db);
+  const queryFn: typeof query = client ? client.query.bind(client) : db.query.bind(db);
 
   // Generate hash of report state at time of action
   const reportHashResult = await queryFn<{ report_hash: string }>(
@@ -300,7 +299,7 @@ export async function getApprovalHistory(reportId: string): Promise<ApprovalHist
 export async function getPendingApprovalsForUser(
   userId: string,
   userRoles: string[],
-  managerId?: string
+  _managerId?: string
 ): Promise<Array<{
   report_id: string;
   title: string;

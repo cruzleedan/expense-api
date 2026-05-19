@@ -47,12 +47,13 @@ const listInsightsRoute = createRoute({
   },
 });
 
-insightsRouter.openapi(listInsightsRoute, async (c) => {
+const listInsightsHandler = async (c) => {
   const userId = c.get('userId');
   const { type, limit, offset, includeStale } = c.req.valid('query');
   const result = await getInsightsForUser(userId, { type, limit, offset, includeStale });
   return c.json({ data: result.insights, total: result.total }, 200);
-});
+};
+insightsRouter.openapi(listInsightsRoute, listInsightsHandler);
 
 // ============================================================================
 // GET /v1/insights/unread-count — Count new insights
@@ -80,11 +81,12 @@ const unreadCountRoute = createRoute({
   },
 });
 
-insightsRouter.openapi(unreadCountRoute, async (c) => {
+const unreadCountHandler = async (c) => {
   const userId = c.get('userId');
   const count = await getUnreadInsightCount(userId);
   return c.json({ count }, 200);
-});
+};
+insightsRouter.openapi(unreadCountRoute, unreadCountHandler);
 
 // ============================================================================
 // POST /v1/insights/:insightId/pin — Pin an insight
@@ -117,12 +119,13 @@ const pinInsightRoute = createRoute({
   },
 });
 
-insightsRouter.openapi(pinInsightRoute, async (c) => {
+const pinInsightHandler = async (c) => {
   const userId = c.get('userId');
   const { insightId } = c.req.valid('param');
   await pinInsight(userId, insightId);
   return c.json({ message: 'Insight pinned' }, 200);
-});
+};
+insightsRouter.openapi(pinInsightRoute, pinInsightHandler);
 
 // ============================================================================
 // POST /v1/insights/:insightId/dismiss — Dismiss an insight
@@ -155,11 +158,12 @@ const dismissInsightRoute = createRoute({
   },
 });
 
-insightsRouter.openapi(dismissInsightRoute, async (c) => {
+const dismissInsightHandler = async (c) => {
   const userId = c.get('userId');
   const { insightId } = c.req.valid('param');
   await dismissInsight(userId, insightId);
   return c.json({ message: 'Insight dismissed' }, 200);
-});
+};
+insightsRouter.openapi(dismissInsightRoute, dismissInsightHandler);
 
 export { insightsRouter };

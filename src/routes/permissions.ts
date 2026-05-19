@@ -35,6 +35,7 @@ const listPermissionsRoute = createRoute({
   summary: 'List all permissions',
   description: 'Get a paginated list of all permissions with optional filtering by category and risk level',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('permission.view')] as const,
   request: {
     query: PermissionListQuerySchema,
   },
@@ -54,7 +55,7 @@ const listPermissionsRoute = createRoute({
   },
 });
 
-permissionsRouter.openapi(listPermissionsRoute, requirePermission('permission.view'), async (c) => {
+permissionsRouter.openapi(listPermissionsRoute, async (c) => {
   const query = c.req.valid('query');
 
   const { permissions, total } = await listPermissions({
@@ -101,6 +102,7 @@ const getPermissionRoute = createRoute({
   summary: 'Get permission by ID',
   description: 'Get a single permission by its ID',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('permission.view')] as const,
   request: {
     params: PermissionIdParamSchema,
   },
@@ -116,7 +118,7 @@ const getPermissionRoute = createRoute({
   },
 });
 
-permissionsRouter.openapi(getPermissionRoute, requirePermission('permission.view'), async (c) => {
+permissionsRouter.openapi(getPermissionRoute, async (c) => {
   const { permissionId } = c.req.valid('param');
   const permission = await getPermissionById(permissionId);
 
@@ -146,6 +148,7 @@ const createPermissionRoute = createRoute({
   summary: 'Create a new permission',
   description: 'Create a new permission in the permission registry',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('permission.create')] as const,
   request: {
     body: {
       content: { 'application/json': { schema: CreatePermissionSchema } },
@@ -167,7 +170,7 @@ const createPermissionRoute = createRoute({
   },
 });
 
-permissionsRouter.openapi(createPermissionRoute, requirePermission('permission.create'), async (c) => {
+permissionsRouter.openapi(createPermissionRoute, async (c) => {
   const input = c.req.valid('json');
 
   const permission = await createPermission({
@@ -200,6 +203,7 @@ const updatePermissionRoute = createRoute({
   summary: 'Update a permission',
   description: 'Update an existing permission. Note: permission name cannot be changed.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('permission.edit')] as const,
   request: {
     params: PermissionIdParamSchema,
     body: {
@@ -218,7 +222,7 @@ const updatePermissionRoute = createRoute({
   },
 });
 
-permissionsRouter.openapi(updatePermissionRoute, requirePermission('permission.edit'), async (c) => {
+permissionsRouter.openapi(updatePermissionRoute, async (c) => {
   const { permissionId } = c.req.valid('param');
   const input = c.req.valid('json');
 
@@ -251,6 +255,7 @@ const deletePermissionRoute = createRoute({
   summary: 'Delete a permission',
   description: 'Delete a permission. Cannot delete permissions that are assigned to roles.',
   security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('permission.delete')] as const,
   request: {
     params: PermissionIdParamSchema,
   },
@@ -270,7 +275,7 @@ const deletePermissionRoute = createRoute({
   },
 });
 
-permissionsRouter.openapi(deletePermissionRoute, requirePermission('permission.delete'), async (c) => {
+permissionsRouter.openapi(deletePermissionRoute, async (c) => {
   const { permissionId } = c.req.valid('param');
 
   await deletePermission(permissionId);

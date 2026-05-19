@@ -1,6 +1,6 @@
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { authMiddleware, getUserId } from '../middleware/auth.js';
-import { getAuthUser } from '../middleware/permission.js';
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import { authMiddleware, getUserId, getUser } from '../middleware/auth.js';
+import type { JwtPayloadV3 } from '../types/index.js';
 import {
   createExpenseReport,
   getExpenseReportById,
@@ -50,7 +50,7 @@ const listRoute = createRoute({
   },
 });
 
-expenseReportsRouter.openapi(listRoute, async (c) => {
+const listHandler = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
 
@@ -70,7 +70,8 @@ expenseReportsRouter.openapi(listRoute, async (c) => {
   );
 
   return c.json(paginate(reports, total, paginationParams), 200);
-});
+};
+expenseReportsRouter.openapi(listRoute, listHandler);
 
 // Create expense report
 const createRoute_ = createRoute({
@@ -102,14 +103,15 @@ const createRoute_ = createRoute({
   },
 });
 
-expenseReportsRouter.openapi(createRoute_, async (c) => {
+const createHandler = async (c) => {
   const userId = getUserId(c);
   const input = c.req.valid('json');
 
   const report = await createExpenseReport(userId, input);
 
   return c.json(report, 201);
-});
+};
+expenseReportsRouter.openapi(createRoute_, createHandler);
 
 // Get expense report by ID
 const getRoute = createRoute({
@@ -143,18 +145,19 @@ const getRoute = createRoute({
   },
 });
 
-expenseReportsRouter.openapi(getRoute, async (c) => {
+const getHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   // Get user permissions from JWT if available
-  const user = c.get('user');
-  const permissions = user?.permissions || [];
+  const jwtUser = getUser(c) as unknown as JwtPayloadV3;
+  const permissions = jwtUser?.permissions || [];
 
   const report = await getExpenseReportById(id, userId, permissions);
 
   return c.json(report, 200);
-});
+};
+expenseReportsRouter.openapi(getRoute, getHandler);
 
 // Update expense report
 const updateRoute = createRoute({
@@ -195,19 +198,20 @@ const updateRoute = createRoute({
   },
 });
 
-expenseReportsRouter.openapi(updateRoute, async (c) => {
+const updateHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   // Get user permissions from JWT if available
-  const user = c.get('user');
-  const permissions = user?.permissions || [];
+  const jwtUser = getUser(c) as unknown as JwtPayloadV3;
+  const permissions = jwtUser?.permissions || [];
 
   const report = await updateExpenseReport(id, userId, input, permissions);
 
   return c.json(report, 200);
-});
+};
+expenseReportsRouter.openapi(updateRoute, updateHandler);
 
 // Delete expense report
 const deleteRoute = createRoute({
@@ -241,17 +245,18 @@ const deleteRoute = createRoute({
   },
 });
 
-expenseReportsRouter.openapi(deleteRoute, async (c) => {
+const deleteHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   // Get user permissions from JWT if available
-  const user = c.get('user');
-  const permissions = user?.permissions || [];
+  const jwtUser = getUser(c) as unknown as JwtPayloadV3;
+  const permissions = jwtUser?.permissions || [];
 
   await deleteExpenseReport(id, userId, permissions);
 
   return c.json({ message: 'Expense report deleted' }, 200);
-});
+};
+expenseReportsRouter.openapi(deleteRoute, deleteHandler);
 
 export { expenseReportsRouter };

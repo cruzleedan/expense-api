@@ -16,6 +16,7 @@ import {
 } from '../services/workflow.service.js';
 import { getPendingApprovalsForUser } from '../services/approval.service.js';
 import { NotFoundError } from '../types/index.js';
+import type { WorkflowDefinition, WorkflowStep, ApprovalHistory } from '../types/index.js';
 import {
   WorkflowSchema,
   WorkflowListResponseSchema,
@@ -32,12 +33,79 @@ import {
   ReportIdParamSchema,
   PendingApprovalsResponseSchema,
 } from '../schemas/workflow.js';
-import { ErrorSchema, MessageSchema } from '../schemas/common.js';
+import { ErrorSchema } from '../schemas/common.js';
 
 const workflowRouter = new OpenAPIHono();
 
 // All routes require authentication
 workflowRouter.use('*', authMiddleware);
+
+// Map snake_case DB WorkflowStep to camelCase schema shape
+function mapStep(s: WorkflowStep) {
+  return {
+    stepNumber: s.step_number,
+    name: s.name,
+    targetType: s.target_type,
+    targetValue: s.target_value,
+    slaHours: s.sla_hours,
+    required: s.required,
+    requiredIf: s.required_if,
+    skipIf: s.skip_if,
+    escalation: s.escalation ? {
+      enabled: s.escalation.enabled,
+      targetType: s.escalation.target_type,
+      targetValue: s.escalation.target_value,
+      notifyAtHours: s.escalation.notify_at_hours,
+      autoApproveAfterHours: s.escalation.auto_approve_after_hours,
+    } : undefined,
+  };
+}
+
+// Map snake_case DB WorkflowConditions to camelCase
+function mapConditions(c: WorkflowDefinition['conditions']) {
+  if (!c) return null;
+  return {
+    amountMin: c.amount_min,
+    amountMax: c.amount_max,
+    expenseCategories: c.expense_categories,
+    departments: c.departments,
+  };
+}
+
+// Map DB WorkflowDefinition to camelCase response shape
+function mapWorkflow(w: WorkflowDefinition) {
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description,
+    version: w.version,
+    isActive: w.is_active,
+    conditions: mapConditions(w.conditions),
+    steps: w.steps.map(mapStep),
+    onReturnPolicy: w.on_return_policy,
+    createdAt: w.created_at.toISOString(),
+    updatedAt: w.updated_at.toISOString(),
+    createdBy: w.created_by,
+  };
+}
+
+// Map DB ApprovalHistory to camelCase response shape
+function mapHistory(h: ApprovalHistory) {
+  return {
+    id: h.id,
+    reportId: h.report_id,
+    stepNumber: h.step_number,
+    stepName: h.step_name,
+    actorId: h.actor_id,
+    actorEmail: h.actor_email,
+    action: h.action,
+    comment: h.comment,
+    rejectionCategory: h.rejection_category,
+    createdAt: h.created_at.toISOString(),
+    slaDeadline: h.sla_deadline?.toISOString() ?? null,
+    wasEscalated: h.was_escalated,
+  };
+}
 
 // ============================================================================
 // WORKFLOW DEFINITION ROUTES (Admin)
@@ -60,17 +128,14 @@ const listWorkflowsRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(listWorkflowsRoute, async (c) => {
+const listWorkflowsHandler = async (c) => {
   const workflows = await getAllWorkflows();
   return c.json({
-    workflows: workflows.map(w => ({
-      ...w,
-      created_at: w.created_at.toISOString(),
-      updated_at: w.updated_at.toISOString(),
-    })),
+    workflows: workflows.map(mapWorkflow),
     total: workflows.length,
   }, 200);
-});
+};
+workflowRouter.openapi(listWorkflowsRoute, listWorkflowsHandler);
 
 // Get workflow by ID
 const getWorkflowRoute = createRoute({
@@ -96,7 +161,7 @@ const getWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(getWorkflowRoute, async (c) => {
+const getWorkflowHandler = async (c) => {
   const { workflowId } = c.req.valid('param');
   const workflow = await getWorkflowById(workflowId);
 
@@ -104,12 +169,9 @@ workflowRouter.openapi(getWorkflowRoute, async (c) => {
     throw new NotFoundError('Workflow');
   }
 
-  return c.json({
-    ...workflow,
-    created_at: workflow.created_at.toISOString(),
-    updated_at: workflow.updated_at.toISOString(),
-  }, 200);
-});
+  return c.json(mapWorkflow(workflow), 200);
+};
+workflowRouter.openapi(getWorkflowRoute, getWorkflowHandler);
 
 // Create workflow
 const createWorkflowRoute = createRoute({
@@ -137,25 +199,46 @@ const createWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(createWorkflowRoute, async (c) => {
+const createWorkflowHandler = async (c) => {
   const body = c.req.valid('json');
   const userId = getUserId(c);
+
+  // Map camelCase steps from request to snake_case WorkflowStep for service
+  const steps: WorkflowStep[] = body.steps.map(s => ({
+    step_number: s.stepNumber,
+    name: s.name,
+    target_type: s.targetType,
+    target_value: s.targetValue,
+    sla_hours: s.slaHours,
+    required: s.required,
+    required_if: s.requiredIf,
+    skip_if: s.skipIf,
+    escalation: s.escalation ? {
+      enabled: s.escalation.enabled,
+      target_type: s.escalation.targetType,
+      target_value: s.escalation.targetValue,
+      notify_at_hours: s.escalation.notifyAtHours,
+      auto_approve_after_hours: s.escalation.autoApproveAfterHours,
+    } : undefined,
+  }));
 
   const workflow = await createWorkflow(
     body.name,
     body.description || null,
-    body.conditions || null,
-    body.steps,
-    body.on_return_policy,
+    body.conditions ? {
+      amount_min: body.conditions.amountMin,
+      amount_max: body.conditions.amountMax,
+      expense_categories: body.conditions.expenseCategories,
+      departments: body.conditions.departments,
+    } : null,
+    steps,
+    body.onReturnPolicy,
     userId
   );
 
-  return c.json({
-    ...workflow,
-    created_at: workflow.created_at.toISOString(),
-    updated_at: workflow.updated_at.toISOString(),
-  }, 201);
-});
+  return c.json(mapWorkflow(workflow), 201);
+};
+workflowRouter.openapi(createWorkflowRoute, createWorkflowHandler);
 
 // Update workflow
 const updateWorkflowRoute = createRoute({
@@ -184,24 +267,44 @@ const updateWorkflowRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(updateWorkflowRoute, async (c) => {
+const updateWorkflowHandler = async (c) => {
   const { workflowId } = c.req.valid('param');
   const body = c.req.valid('json');
   const userId = getUserId(c);
 
+  const steps: WorkflowStep[] | undefined = body.steps?.map(s => ({
+    step_number: s.stepNumber,
+    name: s.name,
+    target_type: s.targetType,
+    target_value: s.targetValue,
+    sla_hours: s.slaHours,
+    required: s.required,
+    required_if: s.requiredIf,
+    skip_if: s.skipIf,
+    escalation: s.escalation ? {
+      enabled: s.escalation.enabled,
+      target_type: s.escalation.targetType,
+      target_value: s.escalation.targetValue,
+      notify_at_hours: s.escalation.notifyAtHours,
+      auto_approve_after_hours: s.escalation.autoApproveAfterHours,
+    } : undefined,
+  }));
+
   const workflow = await updateWorkflow(workflowId, {
     description: body.description,
-    conditions: body.conditions,
-    steps: body.steps,
-    onReturnPolicy: body.on_return_policy,
+    conditions: body.conditions ? {
+      amount_min: body.conditions.amountMin,
+      amount_max: body.conditions.amountMax,
+      expense_categories: body.conditions.expenseCategories,
+      departments: body.conditions.departments,
+    } : undefined,
+    steps,
+    onReturnPolicy: body.onReturnPolicy,
   }, userId);
 
-  return c.json({
-    ...workflow,
-    created_at: workflow.created_at.toISOString(),
-    updated_at: workflow.updated_at.toISOString(),
-  }, 200);
-});
+  return c.json(mapWorkflow(workflow), 200);
+};
+workflowRouter.openapi(updateWorkflowRoute, updateWorkflowHandler);
 
 // ============================================================================
 // REPORT WORKFLOW ACTION ROUTES
@@ -239,7 +342,7 @@ const submitReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(submitReportRoute, async (c) => {
+const submitReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
@@ -247,14 +350,11 @@ workflowRouter.openapi(submitReportRoute, async (c) => {
 
   return c.json({
     success: result.success,
-    current_step: result.currentStep,
-    workflow: {
-      ...result.workflow,
-      created_at: result.workflow.created_at.toISOString(),
-      updated_at: result.workflow.updated_at.toISOString(),
-    },
+    currentStep: result.currentStep,
+    workflow: mapWorkflow(result.workflow),
   }, 200);
-});
+};
+workflowRouter.openapi(submitReportRoute, submitReportHandler);
 
 // Approve report
 const approveReportRoute = createRoute({
@@ -287,7 +387,7 @@ const approveReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(approveReportRoute, async (c) => {
+const approveReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -296,10 +396,11 @@ workflowRouter.openapi(approveReportRoute, async (c) => {
 
   return c.json({
     success: result.success,
-    is_fully_approved: result.isFullyApproved,
-    next_step: result.nextStep,
+    isFullyApproved: result.isFullyApproved,
+    nextStep: result.nextStep,
   }, 200);
-});
+};
+workflowRouter.openapi(approveReportRoute, approveReportHandler);
 
 // Reject report
 const rejectReportRoute = createRoute({
@@ -332,15 +433,16 @@ const rejectReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(rejectReportRoute, async (c) => {
+const rejectReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
-  const { comment, rejection_category } = c.req.valid('json');
+  const { comment, rejectionCategory } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
-  const result = await rejectReport(reportId, authUser.id, authUser.email, comment, rejection_category);
+  const result = await rejectReport(reportId, authUser.id, authUser.email, comment, rejectionCategory);
 
   return c.json({ success: result.success }, 200);
-});
+};
+workflowRouter.openapi(rejectReportRoute, rejectReportHandler);
 
 // Return report for corrections
 const returnReportRoute = createRoute({
@@ -373,7 +475,7 @@ const returnReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(returnReportRoute, async (c) => {
+const returnReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -381,7 +483,8 @@ workflowRouter.openapi(returnReportRoute, async (c) => {
   const result = await returnReport(reportId, authUser.id, authUser.email, comment);
 
   return c.json({ success: result.success }, 200);
-});
+};
+workflowRouter.openapi(returnReportRoute, returnReportHandler);
 
 // Withdraw report
 const withdrawReportRoute = createRoute({
@@ -411,14 +514,15 @@ const withdrawReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(withdrawReportRoute, async (c) => {
+const withdrawReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
   const result = await withdrawReport(reportId, userId);
 
   return c.json({ success: result.success }, 200);
-});
+};
+workflowRouter.openapi(withdrawReportRoute, withdrawReportHandler);
 
 // Revise rejected report
 const reviseReportRoute = createRoute({
@@ -452,14 +556,15 @@ const reviseReportRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(reviseReportRoute, async (c) => {
+const reviseReportHandler = async (c) => {
   const { reportId } = c.req.valid('param');
   const authUser = getAuthUser(c);
 
   const result = await reviseReport(reportId, authUser.id, authUser.email);
 
   return c.json({ success: result.success }, 200);
-});
+};
+workflowRouter.openapi(reviseReportRoute, reviseReportHandler);
 
 // Get workflow status for a report
 const getReportStatusRoute = createRoute({
@@ -484,7 +589,7 @@ const getReportStatusRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(getReportStatusRoute, async (c) => {
+const getReportStatusHandler = async (c) => {
   const { reportId } = c.req.valid('param');
 
   const status = await getReportWorkflowStatus(reportId);
@@ -495,20 +600,13 @@ workflowRouter.openapi(getReportStatusRoute, async (c) => {
 
   return c.json({
     status: status.status,
-    current_step: status.currentStep,
-    total_steps: status.totalSteps,
-    workflow: status.workflow ? {
-      ...status.workflow,
-      created_at: status.workflow.created_at?.toISOString() || new Date().toISOString(),
-      updated_at: status.workflow.updated_at?.toISOString() || new Date().toISOString(),
-    } : null,
-    history: status.history.map(h => ({
-      ...h,
-      created_at: h.created_at.toISOString(),
-      sla_deadline: h.sla_deadline?.toISOString() || null,
-    })),
+    currentStep: status.currentStep,
+    totalSteps: status.totalSteps,
+    workflow: status.workflow ? mapWorkflow(status.workflow) : null,
+    history: status.history.map(mapHistory),
   }, 200);
-});
+};
+workflowRouter.openapi(getReportStatusRoute, getReportStatusHandler);
 
 // ============================================================================
 // PENDING APPROVALS
@@ -530,7 +628,7 @@ const getPendingApprovalsRoute = createRoute({
   },
 });
 
-workflowRouter.openapi(getPendingApprovalsRoute, async (c) => {
+const getPendingApprovalsHandler = async (c) => {
   const authUser = getAuthUser(c);
   const approvals = await getPendingApprovalsForUser(authUser.id, authUser.roles);
 
@@ -541,6 +639,7 @@ workflowRouter.openapi(getPendingApprovalsRoute, async (c) => {
     })),
     total: approvals.length,
   }, 200);
-});
+};
+workflowRouter.openapi(getPendingApprovalsRoute, getPendingApprovalsHandler);
 
 export { workflowRouter };

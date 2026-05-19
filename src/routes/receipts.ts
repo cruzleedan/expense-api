@@ -81,7 +81,7 @@ const listRoute = createRoute({
   },
 });
 
-receiptsRouter.openapi(listRoute, async (c) => {
+const listHandler = async (c) => {
   const userId = getUserId(c);
   const reportId = c.req.param('reportId');
   const query = c.req.valid('query');
@@ -97,7 +97,8 @@ receiptsRouter.openapi(listRoute, async (c) => {
   const { receipts, total } = await listReceipts(reportId, userId, paginationParams);
 
   return c.json(paginate(receipts, total, paginationParams), 200);
-});
+};
+receiptsRouter.openapi(listRoute, listHandler);
 
 // Upload receipt - Note: multipart/form-data doesn't have full OpenAPI schema support in zod-openapi
 const uploadRoute = createRoute({
@@ -140,9 +141,9 @@ const uploadRoute = createRoute({
   },
 });
 
-receiptsRouter.openapi(uploadRoute, async (c) => {
+const uploadHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId') as string;
 
   const formData = await c.req.formData();
   const file = formData.get('file');
@@ -171,7 +172,8 @@ receiptsRouter.openapi(uploadRoute, async (c) => {
   }
 
   return c.json({ receipt: result.receipt }, 201);
-});
+};
+receiptsRouter.openapi(uploadRoute, uploadHandler);
 
 // Get receipt by ID
 const getReceiptRoute = createRoute({
@@ -205,14 +207,15 @@ const getReceiptRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(getReceiptRoute, async (c) => {
+const getReceiptHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const receipt = await getReceiptById(id, userId);
 
   return c.json(receipt, 200);
-});
+};
+receiptDirectRouter.openapi(getReceiptRoute, getReceiptHandler);
 
 // Download receipt file
 const downloadRoute = createRoute({
@@ -246,7 +249,7 @@ const downloadRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(downloadRoute, async (c) => {
+const downloadHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -256,8 +259,9 @@ receiptDirectRouter.openapi(downloadRoute, async (c) => {
   c.header('Content-Disposition', `attachment; filename="${fileName}"`);
   c.header('Content-Length', buffer.length.toString());
 
-  return c.body(buffer);
-});
+  return c.body(buffer.buffer as ArrayBuffer);
+};
+receiptDirectRouter.openapi(downloadRoute, downloadHandler);
 
 // Delete receipt
 const deleteReceiptRoute = createRoute({
@@ -291,14 +295,15 @@ const deleteReceiptRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(deleteReceiptRoute, async (c) => {
+const deleteReceiptHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   await deleteReceipt(id, userId);
 
   return c.json({ message: 'Receipt deleted' }, 200);
-});
+};
+receiptDirectRouter.openapi(deleteReceiptRoute, deleteReceiptHandler);
 
 // Get receipt associations
 const getAssociationsRoute = createRoute({
@@ -328,14 +333,15 @@ const getAssociationsRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(getAssociationsRoute, async (c) => {
+const getAssociationsHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const lines = await getReceiptAssociations(id, userId);
 
   return c.json({ lines }, 200);
-});
+};
+receiptDirectRouter.openapi(getAssociationsRoute, getAssociationsHandler);
 
 // Associate receipt with expense lines
 const associateRoute = createRoute({
@@ -372,7 +378,7 @@ const associateRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(associateRoute, async (c) => {
+const associateHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const { lineIds } = c.req.valid('json');
@@ -380,7 +386,8 @@ receiptDirectRouter.openapi(associateRoute, async (c) => {
   await associateReceiptWithLines(id, lineIds, userId);
 
   return c.json({ message: 'Receipt associated with expense lines' }, 200);
-});
+};
+receiptDirectRouter.openapi(associateRoute, associateHandler);
 
 // Remove receipt-line association
 const LineIdParamSchema = z.object({
@@ -415,14 +422,15 @@ const removeAssociationRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(removeAssociationRoute, async (c) => {
+const removeAssociationHandler = async (c) => {
   const userId = getUserId(c);
   const { id, lineId } = c.req.valid('param');
 
   await removeReceiptLineAssociation(id, lineId, userId);
 
   return c.json({ message: 'Association removed' }, 200);
-});
+};
+receiptDirectRouter.openapi(removeAssociationRoute, removeAssociationHandler);
 
 // Request presigned upload URL
 const requestUploadUrlRoute = createRoute({
@@ -462,9 +470,9 @@ const requestUploadUrlRoute = createRoute({
   },
 });
 
-receiptsRouter.openapi(requestUploadUrlRoute, async (c) => {
+const requestUploadUrlHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId') as string;
   const body = c.req.valid('json');
 
   const result = await requestUploadUrl(userId, {
@@ -479,7 +487,8 @@ receiptsRouter.openapi(requestUploadUrlRoute, async (c) => {
     key: result.key,
     expiresAt: result.expiresAt.toISOString(),
   }, 200);
-});
+};
+receiptsRouter.openapi(requestUploadUrlRoute, requestUploadUrlHandler);
 
 // Confirm upload after file has been uploaded to S3
 const confirmUploadRoute = createRoute({
@@ -523,9 +532,9 @@ const confirmUploadRoute = createRoute({
   },
 });
 
-receiptsRouter.openapi(confirmUploadRoute, async (c) => {
+const confirmUploadHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId') as string;
   const body = c.req.valid('json');
 
   const result = await confirmUpload(userId, {
@@ -546,7 +555,8 @@ receiptsRouter.openapi(confirmUploadRoute, async (c) => {
   }
 
   return c.json({ receipt: result.receipt }, 201);
-});
+};
+receiptsRouter.openapi(confirmUploadRoute, confirmUploadHandler);
 
 // Get presigned download URL
 const getDownloadUrlRoute = createRoute({
@@ -584,7 +594,7 @@ const getDownloadUrlRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(getDownloadUrlRoute, async (c) => {
+const getDownloadUrlHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -596,7 +606,8 @@ receiptDirectRouter.openapi(getDownloadUrlRoute, async (c) => {
     mimeType: result.mimeType,
     expiresAt: result.expiresAt.toISOString(),
   }, 200);
-});
+};
+receiptDirectRouter.openapi(getDownloadUrlRoute, getDownloadUrlHandler);
 
 // Re-parse receipt with ICR
 const reparseReceiptRoute = createRoute({
@@ -642,28 +653,18 @@ const reparseReceiptRoute = createRoute({
   },
 });
 
-receiptDirectRouter.openapi(reparseReceiptRoute, async (c) => {
+const reparseReceiptHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const result = await reparseReceiptById(id, userId);
 
-  // Map error codes to appropriate HTTP status codes
   if (!result.success && result.error) {
-    const statusCodeMap: Record<string, number> = {
-      'PARSE_TIMEOUT': 408,
-      'LOW_QUALITY': 422,
-      'SERVICE_UNAVAILABLE': 503,
-    };
-
-    const statusCode = statusCodeMap[result.error.code] || 200;
-
-    // For service errors, we still return 200 with the error in the body
-    // to maintain consistent response format
     return c.json(result, 200);
   }
 
   return c.json(result, 200);
-});
+};
+receiptDirectRouter.openapi(reparseReceiptRoute, reparseReceiptHandler);
 
 export { receiptsRouter, receiptDirectRouter };

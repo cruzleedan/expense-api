@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
-import { requirePermission, requireRole } from '../middleware/permission.js';
+import { requirePermission } from '../middleware/permission.js';
 import {
   getAllRoles,
   getRoleById,
@@ -22,9 +22,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from '../types/index.j
 import {
   RoleSchema,
   RoleWithPermissionsSchema,
-  PermissionSchema,
   RoleListResponseSchema,
-  PermissionListResponseSchema,
   UserRolesResponseSchema,
   SodValidationResultSchema,
   CreateRoleRequestSchema,
@@ -33,7 +31,6 @@ import {
   AssignRoleRequestSchema,
   RoleIdParamSchema,
   UserIdParamSchema,
-  PermissionCategoryParamSchema,
   RoleListQuerySchema,
 } from '../schemas/role.js';
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
@@ -110,7 +107,7 @@ const listRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(listRolesRoute, async (c) => {
+const listRolesHandler = async (c) => {
   const query = c.req.valid('query');
   const paginationParams = {
     page: query.page,
@@ -144,15 +141,14 @@ rolesRouter.openapi(listRolesRoute, async (c) => {
       hasPrev: paginationParams.page > 1,
     },
   }, 200);
-});
+};
+rolesRouter.openapi(listRolesRoute, listRolesHandler);
 
 // ============================================================================
 // ROLE DETAIL ROUTES
 // ============================================================================
 
 // Get role by ID with permissions
-// Note: Using regex pattern to ensure roleId must be a valid UUID format
-// This prevents the route from matching static paths like '/permissions'
 const getRoleRoute = createRoute({
   method: 'get',
   path: '/{roleId}',
@@ -176,7 +172,7 @@ const getRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(getRoleRoute, async (c) => {
+const getRoleHandler = async (c) => {
   const { roleId } = c.req.valid('param');
   const role = await getRoleById(roleId);
 
@@ -195,7 +191,8 @@ rolesRouter.openapi(getRoleRoute, async (c) => {
       created_at: p.created_at.toISOString(),
     })),
   }, 200);
-});
+};
+rolesRouter.openapi(getRoleRoute, getRoleHandler);
 
 // Create a new role
 const createRoleRoute = createRoute({
@@ -227,7 +224,7 @@ const createRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(createRoleRoute, async (c) => {
+const createRoleHandler = async (c) => {
   const { name, description, permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
 
@@ -244,7 +241,8 @@ rolesRouter.openapi(createRoleRoute, async (c) => {
     }
     throw error;
   }
-});
+};
+rolesRouter.openapi(createRoleRoute, createRoleHandler);
 
 // Update role permissions
 const updateRoleRoute = createRoute({
@@ -281,7 +279,7 @@ const updateRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(updateRoleRoute, async (c) => {
+const updateRoleHandler = async (c) => {
   const { roleId } = c.req.valid('param');
   const { permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
@@ -298,7 +296,8 @@ rolesRouter.openapi(updateRoleRoute, async (c) => {
   await updateRolePermissions(roleId, permissionIds, userId);
 
   return c.json({ message: 'Role updated successfully' }, 200);
-});
+};
+rolesRouter.openapi(updateRoleRoute, updateRoleHandler);
 
 // Delete a role
 const deleteRoleRoute = createRoute({
@@ -328,7 +327,7 @@ const deleteRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(deleteRoleRoute, async (c) => {
+const deleteRoleHandler = async (c) => {
   const { roleId } = c.req.valid('param');
 
   const role = await getRoleById(roleId);
@@ -346,7 +345,8 @@ rolesRouter.openapi(deleteRoleRoute, async (c) => {
   }
 
   return c.json({ message: 'Role deleted successfully' }, 200);
-});
+};
+rolesRouter.openapi(deleteRoleRoute, deleteRoleHandler);
 
 // ============================================================================
 // USER ROLE ASSIGNMENT ROUTES
@@ -376,7 +376,7 @@ const getUserRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(getUserRolesRoute, async (c) => {
+const getUserRolesHandler = async (c) => {
   const { userId } = c.req.valid('param');
   const roles = await getUserRoles(userId);
 
@@ -388,7 +388,8 @@ rolesRouter.openapi(getUserRolesRoute, async (c) => {
       updated_at: r.updated_at.toISOString(),
     })),
   }, 200);
-});
+};
+rolesRouter.openapi(getUserRolesRoute, getUserRolesHandler);
 
 // Set user's roles (replace all)
 const setUserRolesRoute = createRoute({
@@ -421,15 +422,15 @@ const setUserRolesRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(setUserRolesRoute, async (c) => {
+const setUserRolesHandler = async (c) => {
   const { userId } = c.req.valid('param');
-  const { role_ids } = c.req.valid('json');
+  const { roleIds } = c.req.valid('json');
   const adminId = getUserId(c);
 
   // Check for admin/finance role assignment permissions
-  const targetRoles = await Promise.all(role_ids.map(id => getRoleById(id)));
-  const adminRole = targetRoles.find(r => r?.name === 'admin' || r?.name === 'super_admin');
-  const financeRole = targetRoles.find(r => r?.name === 'finance');
+  const targetRoles = await Promise.all(roleIds.map((id: string) => getRoleById(id)));
+  const adminRole = targetRoles.find((r) => r?.name === 'admin' || r?.name === 'super_admin');
+  const financeRole = targetRoles.find((r) => r?.name === 'finance');
 
   const authUser = c.get('authUser');
   if (adminRole && !authUser?.permissions.includes('role.assign.admin')) {
@@ -440,15 +441,16 @@ rolesRouter.openapi(setUserRolesRoute, async (c) => {
   }
 
   // Validate SoD before assignment
-  const sodResult = await validateRoleAssignmentSod(userId, role_ids);
+  const sodResult = await validateRoleAssignmentSod(userId, roleIds);
   if (!sodResult.valid) {
     return c.json(sodResult, 400);
   }
 
-  await setUserRoles(userId, role_ids, adminId);
+  await setUserRoles(userId, roleIds, adminId);
 
   return c.json({ message: 'User roles updated successfully' }, 200);
-});
+};
+rolesRouter.openapi(setUserRolesRoute, setUserRolesHandler);
 
 // Add a role to user
 const addUserRoleRoute = createRoute({
@@ -477,13 +479,13 @@ const addUserRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(addUserRoleRoute, async (c) => {
+const addUserRoleHandler = async (c) => {
   const { userId } = c.req.valid('param');
-  const { role_id } = c.req.valid('json');
+  const { roleId } = c.req.valid('json');
   const adminId = getUserId(c);
 
   // Check permissions for special roles
-  const role = await getRoleById(role_id);
+  const role = await getRoleById(roleId);
   if (!role) {
     throw new NotFoundError('Role');
   }
@@ -497,15 +499,16 @@ rolesRouter.openapi(addUserRoleRoute, async (c) => {
   }
 
   // Validate SoD
-  const sodResult = await validateRoleAssignmentSod(userId, [role_id]);
+  const sodResult = await validateRoleAssignmentSod(userId, [roleId]);
   if (!sodResult.valid) {
     return c.json(sodResult, 400);
   }
 
-  await assignRoleToUser(userId, role_id, adminId);
+  await assignRoleToUser(userId, roleId, adminId);
 
   return c.json({ message: 'Role added successfully' }, 200);
-});
+};
+rolesRouter.openapi(addUserRoleRoute, addUserRoleHandler);
 
 // Remove a role from user
 const removeUserRoleRoute = createRoute({
@@ -527,13 +530,14 @@ const removeUserRoleRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(removeUserRoleRoute, async (c) => {
+const removeUserRoleHandler = async (c) => {
   const { userId, roleId } = c.req.valid('param');
 
   await removeRoleFromUser(userId, roleId);
 
   return c.json({ message: 'Role removed successfully' }, 200);
-});
+};
+rolesRouter.openapi(removeUserRoleRoute, removeUserRoleHandler);
 
 // Validate user's SoD status
 const validateUserSodRoute = createRoute({
@@ -555,10 +559,11 @@ const validateUserSodRoute = createRoute({
   },
 });
 
-rolesRouter.openapi(validateUserSodRoute, async (c) => {
+const validateUserSodHandler = async (c) => {
   const { userId } = c.req.valid('param');
   const result = await validateUserSod(userId);
   return c.json(result, 200);
-});
+};
+rolesRouter.openapi(validateUserSodRoute, validateUserSodHandler);
 
 export { rolesRouter };

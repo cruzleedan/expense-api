@@ -15,6 +15,7 @@ interface ErrorResponse {
 export const errorHandler: MiddlewareHandler = async (c, next) => {
   try {
     await next();
+    return;
   } catch (error) {
     return handleError(c, error);
   }

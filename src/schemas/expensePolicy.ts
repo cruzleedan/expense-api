@@ -91,7 +91,7 @@ export const PolicyCheckContextSchema = z.object({
   departmentId: z.string().uuid().optional(),
   userRoles: z.array(z.string()).optional(),
   amount: z.number().optional(),
-  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/).optional(),
   merchantName: z.string().optional(),
 }).openapi('PolicyCheckContext');
 

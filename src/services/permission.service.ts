@@ -1,4 +1,4 @@
-import { db } from '../db/client';
+import { db } from '../db/client.js';
 import type {
   Permission,
   PermissionRiskLevel,
@@ -7,8 +7,8 @@ import type {
   SodValidationResult,
   PermissionCheckResult,
   AuthUser,
-} from '../types';
-import { NotFoundError, ConflictError } from '../types';
+} from '../types/index.js';
+import { NotFoundError, ConflictError } from '../types/index.js';
 import {
   buildOrderByClause,
   buildSearchCondition,
@@ -18,7 +18,7 @@ import {
   PERMISSION_SORTABLE_FIELDS,
   PERMISSION_SEARCHABLE_FIELDS,
   type PaginationParams,
-} from '../utils/pagination';
+} from '../utils/pagination.js';
 
 /**
  * Permission Service

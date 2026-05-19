@@ -75,7 +75,7 @@ export interface ListProjectsFilters {
   clientName?: string;
 }
 
-const PROJECT_SORTABLE_FIELDS = ['name', 'code', 'status', 'budget_amount', 'spent_amount', 'start_date', 'end_date', 'created_at', 'updated_at'];
+const PROJECT_SORTABLE_FIELDS: Record<string, string> = { name: 'name', code: 'code', status: 'status', budget_amount: 'budget_amount', spent_amount: 'spent_amount', start_date: 'start_date', end_date: 'end_date', created_at: 'created_at', updated_at: 'updated_at' };
 const PROJECT_SEARCHABLE_FIELDS = ['name', 'code', 'description', 'client_name', 'client_code'];
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {

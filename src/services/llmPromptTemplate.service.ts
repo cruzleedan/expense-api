@@ -57,7 +57,7 @@ export interface ListTemplatesFilters {
   outputFormat?: OutputFormat;
 }
 
-const TEMPLATE_SORTABLE_FIELDS = ['name', 'output_format', 'version', 'created_at', 'updated_at'];
+const TEMPLATE_SORTABLE_FIELDS: Record<string, string> = { name: 'name', output_format: 'output_format', version: 'version', created_at: 'created_at', updated_at: 'updated_at' };
 const TEMPLATE_SEARCHABLE_FIELDS = ['name', 'description', 'user_prompt_template'];
 
 export async function createLlmPromptTemplate(

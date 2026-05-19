@@ -1,21 +1,17 @@
-import { query } from '../db/client.js';
-import type { ExpenseCategory } from '../types/index.js';
+import { db } from '../db/drizzle.js';
+import { expenseCategories } from '../db/schema.js';
+import type { ExpenseCategory } from '../db/schema.js';
 import { NotFoundError, ConflictError } from '../types/index.js';
-import {
-  getOffset,
-  buildOrderByClause,
-  buildSearchCondition,
-  EXPENSE_CATEGORY_SORTABLE_FIELDS,
-  EXPENSE_CATEGORY_SEARCHABLE_FIELDS,
-  type PaginationParams,
-} from '../utils/pagination.js';
+import { eq, and, or, ilike, asc, desc, count, ne, type SQL } from 'drizzle-orm';
+import { getOffset, type PaginationParams } from '../utils/pagination.js';
+
+export type { ExpenseCategory };
 
 export interface CreateExpenseCategoryInput {
   name: string;
   code?: string;
   description?: string;
   parentId?: string;
-  // v5.0 LLM fields
   keywords?: string[];
   synonyms?: string[];
   typicalAmountRange?: Record<string, unknown>;
@@ -27,9 +23,8 @@ export interface UpdateExpenseCategoryInput {
   description?: string;
   isActive?: boolean;
   parentId?: string | null;
-  // v5.0 LLM fields
-  keywords?: string[];
-  synonyms?: string[];
+  keywords?: string[] | null;
+  synonyms?: string[] | null;
   typicalAmountRange?: Record<string, unknown> | null;
 }
 
@@ -37,101 +32,88 @@ export async function createExpenseCategory(
   input: CreateExpenseCategoryInput
 ): Promise<ExpenseCategory> {
   if (input.code) {
-    const existing = await query<ExpenseCategory>(
-      'SELECT id FROM expense_categories WHERE code = $1',
-      [input.code]
-    );
-    if (existing.rows.length > 0) {
+    const [existing] = await db
+      .select({ id: expenseCategories.id })
+      .from(expenseCategories)
+      .where(eq(expenseCategories.code, input.code))
+      .limit(1);
+    if (existing) {
       throw new ConflictError(`Category with code "${input.code}" already exists`);
     }
   }
 
-  const result = await query<ExpenseCategory>(
-    `INSERT INTO expense_categories (name, code, description, parent_id, keywords, synonyms, typical_amount_range)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
-    [
-      input.name,
-      input.code ?? null,
-      input.description ?? null,
-      input.parentId ?? null,
-      input.keywords ?? null,
-      input.synonyms ?? null,
-      input.typicalAmountRange ? JSON.stringify(input.typicalAmountRange) : null
-    ]
-  );
+  const [result] = await db
+    .insert(expenseCategories)
+    .values({
+      name: input.name,
+      code: input.code ?? null,
+      description: input.description ?? null,
+      parentId: input.parentId ?? null,
+      keywords: input.keywords ?? null,
+      synonyms: input.synonyms ?? null,
+      typicalAmountRange: input.typicalAmountRange ?? null,
+    })
+    .returning();
 
-  return result.rows[0];
+  return result;
 }
 
 export async function getExpenseCategoryById(
   categoryId: string
 ): Promise<ExpenseCategory> {
-  const result = await query<ExpenseCategory>(
-    'SELECT * FROM expense_categories WHERE id = $1',
-    [categoryId]
-  );
+  const [result] = await db
+    .select()
+    .from(expenseCategories)
+    .where(eq(expenseCategories.id, categoryId))
+    .limit(1);
 
-  if (result.rows.length === 0) {
+  if (!result) {
     throw new NotFoundError('Expense category');
   }
 
-  return result.rows[0];
+  return result;
 }
 
 export async function listExpenseCategories(
   params: PaginationParams,
   isActive?: boolean
 ): Promise<{ categories: ExpenseCategory[]; total: number }> {
-  const offset = getOffset(params);
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let paramIndex = 1;
+  const conditions: (SQL | undefined)[] = [
+    isActive !== undefined ? eq(expenseCategories.isActive, isActive) : undefined,
+    params.search
+      ? or(
+          ilike(expenseCategories.name, `%${params.search}%`),
+          ilike(expenseCategories.code, `%${params.search}%`),
+          ilike(expenseCategories.description, `%${params.search}%`)
+        )
+      : undefined,
+  ];
+  const where = and(...(conditions.filter(Boolean) as SQL[]));
 
-  if (isActive !== undefined) {
-    conditions.push(`is_active = $${paramIndex}`);
-    values.push(isActive);
-    paramIndex++;
-  }
+  const sortColMap = {
+    name: expenseCategories.name,
+    code: expenseCategories.code,
+    createdAt: expenseCategories.createdAt,
+    updatedAt: expenseCategories.updatedAt,
+  };
+  const sortCol =
+    params.sortBy && params.sortBy in sortColMap
+      ? sortColMap[params.sortBy as keyof typeof sortColMap]
+      : expenseCategories.name;
+  const orderExpr = params.sortOrder === 'desc' ? desc(sortCol) : asc(sortCol);
 
-  // Add search condition if provided
-  const searchCondition = buildSearchCondition(
-    params.search,
-    EXPENSE_CATEGORY_SEARCHABLE_FIELDS,
-    paramIndex
-  );
-  if (searchCondition) {
-    conditions.push(searchCondition.condition);
-    values.push(searchCondition.value);
-    paramIndex = searchCondition.nextParamIndex;
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  // Build ORDER BY clause with allowed fields, default to name ASC
-  const orderBy = buildOrderByClause(
-    params,
-    EXPENSE_CATEGORY_SORTABLE_FIELDS,
-    'name ASC'
-  );
-
-  const [dataResult, countResult] = await Promise.all([
-    query<ExpenseCategory>(
-      `SELECT * FROM expense_categories ${whereClause}
-       ORDER BY ${orderBy}
-       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-      [...values, params.limit, offset]
-    ),
-    query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM expense_categories ${whereClause}`,
-      values
-    ),
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(expenseCategories)
+      .where(where)
+      .orderBy(orderExpr)
+      .limit(params.limit)
+      .offset(getOffset(params)),
+    db.select({ total: count() }).from(expenseCategories).where(where),
   ]);
 
-  return {
-    categories: dataResult.rows,
-    total: parseInt(countResult.rows[0].count, 10),
-  };
+  return { categories: rows, total };
 }
 
 export async function updateExpenseCategory(
@@ -141,94 +123,50 @@ export async function updateExpenseCategory(
   await getExpenseCategoryById(categoryId);
 
   if (input.code) {
-    const existing = await query<ExpenseCategory>(
-      'SELECT id FROM expense_categories WHERE code = $1 AND id != $2',
-      [input.code, categoryId]
-    );
-    if (existing.rows.length > 0) {
+    const [conflict] = await db
+      .select({ id: expenseCategories.id })
+      .from(expenseCategories)
+      .where(and(eq(expenseCategories.code, input.code), ne(expenseCategories.id, categoryId)))
+      .limit(1);
+    if (conflict) {
       throw new ConflictError(`Category with code "${input.code}" already exists`);
     }
   }
 
-  const updates: string[] = [];
-  const values: unknown[] = [];
-  let paramIndex = 1;
+  const updates: Partial<typeof expenseCategories.$inferInsert> = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.code !== undefined) updates.code = input.code;
+  if (input.description !== undefined) updates.description = input.description;
+  if (input.isActive !== undefined) updates.isActive = input.isActive;
+  if (input.parentId !== undefined) updates.parentId = input.parentId;
+  if (input.keywords !== undefined) updates.keywords = input.keywords;
+  if (input.synonyms !== undefined) updates.synonyms = input.synonyms;
+  if (input.typicalAmountRange !== undefined) updates.typicalAmountRange = input.typicalAmountRange;
 
-  if (input.name !== undefined) {
-    updates.push(`name = $${paramIndex}`);
-    values.push(input.name);
-    paramIndex++;
-  }
-
-  if (input.code !== undefined) {
-    updates.push(`code = $${paramIndex}`);
-    values.push(input.code);
-    paramIndex++;
-  }
-
-  if (input.description !== undefined) {
-    updates.push(`description = $${paramIndex}`);
-    values.push(input.description);
-    paramIndex++;
-  }
-
-  if (input.isActive !== undefined) {
-    updates.push(`is_active = $${paramIndex}`);
-    values.push(input.isActive);
-    paramIndex++;
-  }
-
-  if (input.parentId !== undefined) {
-    updates.push(`parent_id = $${paramIndex}`);
-    values.push(input.parentId);
-    paramIndex++;
-  }
-
-  if (input.keywords !== undefined) {
-    updates.push(`keywords = $${paramIndex}`);
-    values.push(input.keywords);
-    paramIndex++;
-  }
-
-  if (input.synonyms !== undefined) {
-    updates.push(`synonyms = $${paramIndex}`);
-    values.push(input.synonyms);
-    paramIndex++;
-  }
-
-  if (input.typicalAmountRange !== undefined) {
-    updates.push(`typical_amount_range = $${paramIndex}`);
-    values.push(input.typicalAmountRange ? JSON.stringify(input.typicalAmountRange) : null);
-    paramIndex++;
-  }
-
-  if (updates.length === 0) {
+  if (Object.keys(updates).length === 0) {
     return getExpenseCategoryById(categoryId);
   }
 
-  values.push(categoryId);
+  const [result] = await db
+    .update(expenseCategories)
+    .set(updates)
+    .where(eq(expenseCategories.id, categoryId))
+    .returning();
 
-  const result = await query<ExpenseCategory>(
-    `UPDATE expense_categories SET ${updates.join(', ')}
-     WHERE id = $${paramIndex}
-     RETURNING *`,
-    values
-  );
-
-  return result.rows[0];
+  return result;
 }
 
 export async function deleteExpenseCategory(categoryId: string): Promise<void> {
   await getExpenseCategoryById(categoryId);
 
-  const childCount = await query<{ count: string }>(
-    'SELECT COUNT(*) as count FROM expense_categories WHERE parent_id = $1',
-    [categoryId]
-  );
+  const [{ childCount }] = await db
+    .select({ childCount: count() })
+    .from(expenseCategories)
+    .where(eq(expenseCategories.parentId, categoryId));
 
-  if (parseInt(childCount.rows[0].count, 10) > 0) {
+  if (childCount > 0) {
     throw new ConflictError('Cannot delete category with child categories');
   }
 
-  await query('DELETE FROM expense_categories WHERE id = $1', [categoryId]);
+  await db.delete(expenseCategories).where(eq(expenseCategories.id, categoryId));
 }

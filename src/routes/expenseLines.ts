@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { authMiddleware, getUserId, getUser } from '../middleware/auth.js';
 import type { JwtPayloadV3 } from '../types/index.js';
 import { isReportPendingApprovalByUser } from '../services/approval.service.js';
@@ -10,6 +10,8 @@ import {
   deleteExpenseLine,
   bulkCreateExpenseLines,
   listExpenseLinesForSync,
+  type UpdateExpenseLineInput,
+  type CreateExpenseLineInput,
 } from '../services/expenseLine.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
@@ -68,9 +70,9 @@ const listRoute = createRoute({
   },
 });
 
-expenseLinesRouter.openapi(listRoute, async (c) => {
+const listHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId')!;
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -91,7 +93,8 @@ expenseLinesRouter.openapi(listRoute, async (c) => {
   const { lines, total } = await listExpenseLines(reportId, userId, paginationParams, skipOwnership);
 
   return c.json(paginate(lines, total, paginationParams), 200);
-});
+};
+expenseLinesRouter.openapi(listRoute, listHandler);
 
 // Create expense line
 const createLineRoute = createRoute({
@@ -131,15 +134,16 @@ const createLineRoute = createRoute({
   },
 });
 
-expenseLinesRouter.openapi(createLineRoute, async (c) => {
+const createLineHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId')!;
   const input = c.req.valid('json');
 
-  const line = await createExpenseLine(reportId, userId, input);
+  const line = await createExpenseLine(reportId, userId, input as CreateExpenseLineInput);
 
   return c.json(line, 201);
-});
+};
+expenseLinesRouter.openapi(createLineRoute, createLineHandler);
 
 // Bulk create expense lines
 const bulkCreateLineRoute = createRoute({
@@ -179,15 +183,16 @@ const bulkCreateLineRoute = createRoute({
   },
 });
 
-expenseLinesRouter.openapi(bulkCreateLineRoute, async (c) => {
+const bulkCreateLineHandler = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId')!;
   const input = c.req.valid('json');
 
   const result = await bulkCreateExpenseLines(reportId, userId, input.lines);
 
   return c.json(result, 200);
-});
+};
+expenseLinesRouter.openapi(bulkCreateLineRoute, bulkCreateLineHandler);
 
 // Get expense line by ID (direct access)
 const getLineRoute = createRoute({
@@ -221,14 +226,15 @@ const getLineRoute = createRoute({
   },
 });
 
-expenseLineDirectRouter.openapi(getLineRoute, async (c) => {
+const getLineHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const line = await getExpenseLineById(id, userId);
 
   return c.json(line, 200);
-});
+};
+expenseLineDirectRouter.openapi(getLineRoute, getLineHandler);
 
 // Update expense line (direct access)
 const updateLineRoute = createRoute({
@@ -269,15 +275,16 @@ const updateLineRoute = createRoute({
   },
 });
 
-expenseLineDirectRouter.openapi(updateLineRoute, async (c) => {
+const updateLineHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
-  const line = await updateExpenseLine(id, userId, input);
+  const line = await updateExpenseLine(id, userId, input as UpdateExpenseLineInput);
 
   return c.json(line, 200);
-});
+};
+expenseLineDirectRouter.openapi(updateLineRoute, updateLineHandler);
 
 // Delete expense line (direct access)
 const deleteLineRoute = createRoute({
@@ -311,14 +318,15 @@ const deleteLineRoute = createRoute({
   },
 });
 
-expenseLineDirectRouter.openapi(deleteLineRoute, async (c) => {
+const deleteLineHandler = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   await deleteExpenseLine(id, userId);
 
   return c.json({ message: 'Expense line deleted' }, 200);
-});
+};
+expenseLineDirectRouter.openapi(deleteLineRoute, deleteLineHandler);
 
 // Sync endpoint: GET /expense-lines — returns all lines (including tombstones) for the authenticated user
 const syncLinesRoute = createRoute({
@@ -344,12 +352,13 @@ const syncLinesRoute = createRoute({
   },
 });
 
-expenseLineDirectRouter.openapi(syncLinesRoute, async (c) => {
+const syncLinesHandler = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
-  const params = { page: query.page, limit: query.limit };
+  const params = { page: query.page, limit: query.limit, sortOrder: 'asc' as const };
   const { lines, total } = await listExpenseLinesForSync(userId, params, query.updatedSince);
   return c.json(paginate(lines, total, params), 200);
-});
+};
+expenseLineDirectRouter.openapi(syncLinesRoute, syncLinesHandler);
 
 export { expenseLinesRouter, expenseLineDirectRouter };

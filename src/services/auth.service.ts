@@ -1,7 +1,7 @@
 import * as jose from 'jose';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
-import { query, db } from '../db/client.js';
+import { query } from '../db/client.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { User, JwtPayload, JwtPayloadV3, AuthTokens } from '../types/index.js';

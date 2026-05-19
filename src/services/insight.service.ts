@@ -1,45 +1,15 @@
 import { query } from '../db/client.js';
+import { db } from '../db/drizzle.js';
+import { expenseInsights, expenseAnomalies } from '../db/schema.js';
+import type { ExpenseInsight, ExpenseAnomaly } from '../db/schema.js';
 import { chat } from './ollama.service.js';
 import { getLlmPromptTemplateByName, renderTemplate } from './llmPromptTemplate.service.js';
 import { logger } from '../utils/logger.js';
+import { eq, and, or, desc, count, gt, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface Insight {
-  id: string;
-  scope_type: string;
-  scope_id: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  insight_type: string;
-  title: string;
-  content: string;
-  supporting_data: Record<string, unknown> | null;
-  confidence: number | null;
-  is_pinned: boolean;
-  is_stale: boolean;
-  generated_at: string;
-  generated_by: string;
-}
-
-export interface Anomaly {
-  id: string;
-  expense_line_id: string | null;
-  report_id: string | null;
-  user_id: string | null;
-  anomaly_type: string;
-  severity: string;
-  confidence: number;
-  context: Record<string, unknown>;
-  explanation: string;
-  status: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  review_notes: string | null;
-  detected_at: string;
-}
+export type Insight = ExpenseInsight;
+export type Anomaly = ExpenseAnomaly;
 
 // ============================================================================
 // Insight Queries
@@ -48,82 +18,92 @@ export interface Anomaly {
 export async function getInsightsForUser(
   userId: string,
   options?: { type?: string; limit?: number; offset?: number; includeStale?: boolean }
-): Promise<{ insights: Insight[]; total: number }> {
-  const conditions: string[] = [
-    `(scope_type = 'user' AND scope_id = $1::uuid)`,
-    `OR scope_type = 'global'`,
+): Promise<{ insights: ExpenseInsight[]; total: number }> {
+  const scopeCond = or(
+    and(
+      eq(expenseInsights.scopeType, 'user'),
+      eq(expenseInsights.scopeId, userId)
+    ),
+    eq(expenseInsights.scopeType, 'global')
+  );
+
+  const conditions: (SQL | undefined)[] = [
+    scopeCond,
+    !options?.includeStale ? eq(expenseInsights.isStale, false) : undefined,
+    options?.type ? eq(expenseInsights.insightType, options.type) : undefined,
   ];
-  const values: unknown[] = [userId];
-  let paramIndex = 2;
+  const where = and(...(conditions.filter(Boolean) as SQL[]));
 
-  if (!options?.includeStale) {
-    conditions.push(`AND is_stale = false`);
-  }
-
-  if (options?.type) {
-    conditions.push(`AND insight_type = $${paramIndex}`);
-    values.push(options.type);
-    paramIndex++;
-  }
-
-  const whereClause = `WHERE (${conditions[0]} ${conditions[1]}) ${conditions.slice(2).join(' ')}`;
   const limit = options?.limit ?? 20;
   const offset = options?.offset ?? 0;
 
-  const [dataResult, countResult] = await Promise.all([
-    query<Insight>(
-      `SELECT id, scope_type, scope_id, period_start, period_end, insight_type,
-              title, content, supporting_data, confidence, is_pinned, is_stale,
-              generated_at, generated_by
-       FROM expense_insights
-       ${whereClause}
-       ORDER BY is_pinned DESC, generated_at DESC
-       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-      [...values, limit, offset]
-    ),
-    query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM expense_insights ${whereClause}`,
-      values
-    ),
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(expenseInsights)
+      .where(where)
+      .orderBy(desc(expenseInsights.isPinned), desc(expenseInsights.generatedAt))
+      .limit(limit)
+      .offset(offset),
+    db.select({ total: count() }).from(expenseInsights).where(where),
   ]);
 
-  return {
-    insights: dataResult.rows,
-    total: parseInt(countResult.rows[0].count, 10),
-  };
+  return { insights: rows, total };
 }
 
 export async function getUnreadInsightCount(userId: string): Promise<number> {
-  // Count non-stale insights generated in the last 7 days that aren't pinned (i.e., "new")
-  const result = await query<{ count: string }>(
-    `SELECT COUNT(*) as count
-     FROM expense_insights
-     WHERE ((scope_type = 'user' AND scope_id = $1::uuid) OR scope_type = 'global')
-       AND is_stale = false
-       AND generated_at > NOW() - INTERVAL '7 days'`,
-    [userId]
+  const scopeCond = or(
+    and(
+      eq(expenseInsights.scopeType, 'user'),
+      eq(expenseInsights.scopeId, userId)
+    ),
+    eq(expenseInsights.scopeType, 'global')
   );
-  return parseInt(result.rows[0].count, 10);
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(expenseInsights)
+    .where(
+      and(
+        scopeCond,
+        eq(expenseInsights.isStale, false),
+        gt(expenseInsights.generatedAt, sql`NOW() - INTERVAL '7 days'`)
+      )
+    );
+  return total;
 }
 
 export async function pinInsight(userId: string, insightId: string): Promise<void> {
-  const result = await query(
-    `UPDATE expense_insights SET is_pinned = true
-     WHERE id = $1 AND ((scope_type = 'user' AND scope_id = $2::uuid) OR scope_type = 'global')`,
-    [insightId, userId]
+  const scopeCond = or(
+    and(
+      eq(expenseInsights.scopeType, 'user'),
+      eq(expenseInsights.scopeId, userId)
+    ),
+    eq(expenseInsights.scopeType, 'global')
   );
-  if (result.rowCount === 0) {
+  const updated = await db
+    .update(expenseInsights)
+    .set({ isPinned: true })
+    .where(and(eq(expenseInsights.id, insightId), scopeCond))
+    .returning({ id: expenseInsights.id });
+  if (updated.length === 0) {
     throw new Error('Insight not found or not accessible');
   }
 }
 
 export async function dismissInsight(userId: string, insightId: string): Promise<void> {
-  const result = await query(
-    `UPDATE expense_insights SET is_stale = true
-     WHERE id = $1 AND ((scope_type = 'user' AND scope_id = $2::uuid) OR scope_type = 'global')`,
-    [insightId, userId]
+  const scopeCond = or(
+    and(
+      eq(expenseInsights.scopeType, 'user'),
+      eq(expenseInsights.scopeId, userId)
+    ),
+    eq(expenseInsights.scopeType, 'global')
   );
-  if (result.rowCount === 0) {
+  const updated = await db
+    .update(expenseInsights)
+    .set({ isStale: true })
+    .where(and(eq(expenseInsights.id, insightId), scopeCond))
+    .returning({ id: expenseInsights.id });
+  if (updated.length === 0) {
     throw new Error('Insight not found or not accessible');
   }
 }
@@ -135,48 +115,29 @@ export async function dismissInsight(userId: string, insightId: string): Promise
 export async function getAnomaliesForUser(
   userId: string,
   options?: { status?: string; severity?: string; limit?: number; offset?: number }
-): Promise<{ anomalies: Anomaly[]; total: number }> {
-  const conditions: string[] = ['user_id = $1'];
-  const values: unknown[] = [userId];
-  let paramIndex = 2;
+): Promise<{ anomalies: ExpenseAnomaly[]; total: number }> {
+  const conditions: (SQL | undefined)[] = [
+    eq(expenseAnomalies.userId, userId),
+    options?.status ? eq(expenseAnomalies.status, options.status) : undefined,
+    options?.severity ? eq(expenseAnomalies.severity, options.severity) : undefined,
+  ];
+  const where = and(...(conditions.filter(Boolean) as SQL[]));
 
-  if (options?.status) {
-    conditions.push(`status = $${paramIndex}`);
-    values.push(options.status);
-    paramIndex++;
-  }
-
-  if (options?.severity) {
-    conditions.push(`severity = $${paramIndex}`);
-    values.push(options.severity);
-    paramIndex++;
-  }
-
-  const whereClause = `WHERE ${conditions.join(' AND ')}`;
   const limit = options?.limit ?? 20;
   const offset = options?.offset ?? 0;
 
-  const [dataResult, countResult] = await Promise.all([
-    query<Anomaly>(
-      `SELECT id, expense_line_id, report_id, user_id, anomaly_type, severity,
-              confidence, context, explanation, status, reviewed_by, reviewed_at,
-              review_notes, detected_at
-       FROM expense_anomalies
-       ${whereClause}
-       ORDER BY detected_at DESC
-       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-      [...values, limit, offset]
-    ),
-    query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM expense_anomalies ${whereClause}`,
-      values
-    ),
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(expenseAnomalies)
+      .where(where)
+      .orderBy(desc(expenseAnomalies.detectedAt))
+      .limit(limit)
+      .offset(offset),
+    db.select({ total: count() }).from(expenseAnomalies).where(where),
   ]);
 
-  return {
-    anomalies: dataResult.rows,
-    total: parseInt(countResult.rows[0].count, 10),
-  };
+  return { anomalies: rows, total };
 }
 
 export async function reviewAnomaly(
@@ -184,31 +145,38 @@ export async function reviewAnomaly(
   anomalyId: string,
   notes?: string
 ): Promise<void> {
-  const result = await query(
-    `UPDATE expense_anomalies
-     SET status = 'reviewed', reviewed_by = $1, reviewed_at = NOW(), review_notes = $3
-     WHERE id = $2 AND user_id = $1`,
-    [userId, anomalyId, notes ?? null]
-  );
-  if (result.rowCount === 0) {
+  const updated = await db
+    .update(expenseAnomalies)
+    .set({
+      status: 'reviewed',
+      reviewedBy: userId,
+      reviewedAt: sql`NOW()`,
+      reviewNotes: notes ?? null,
+    })
+    .where(and(eq(expenseAnomalies.id, anomalyId), eq(expenseAnomalies.userId, userId)))
+    .returning({ id: expenseAnomalies.id });
+  if (updated.length === 0) {
     throw new Error('Anomaly not found or not accessible');
   }
 }
 
 export async function dismissAnomaly(userId: string, anomalyId: string): Promise<void> {
-  const result = await query(
-    `UPDATE expense_anomalies
-     SET status = 'dismissed', reviewed_by = $1, reviewed_at = NOW()
-     WHERE id = $2 AND user_id = $1`,
-    [userId, anomalyId]
-  );
-  if (result.rowCount === 0) {
+  const updated = await db
+    .update(expenseAnomalies)
+    .set({
+      status: 'dismissed',
+      reviewedBy: userId,
+      reviewedAt: sql`NOW()`,
+    })
+    .where(and(eq(expenseAnomalies.id, anomalyId), eq(expenseAnomalies.userId, userId)))
+    .returning({ id: expenseAnomalies.id });
+  if (updated.length === 0) {
     throw new Error('Anomaly not found or not accessible');
   }
 }
 
 // ============================================================================
-// Insight Generation (Background job logic)
+// Insight Generation (Background job logic - uses raw SQL)
 // ============================================================================
 
 interface ActiveUser {
@@ -243,9 +211,6 @@ async function getUserSpendingSummary(userId: string): Promise<SpendingSummaryRo
   return result.rows[0] ?? null;
 }
 
-/**
- * Generate insights for all active users using the monthly_summary template.
- */
 export async function generateDailyInsights(): Promise<number> {
   let generated = 0;
   const users = await getActiveUsers();
@@ -255,7 +220,6 @@ export async function generateDailyInsights(): Promise<number> {
       const summary = await getUserSpendingSummary(user.id);
       if (!summary || summary.transaction_count === 0) continue;
 
-      // Check if we already have a recent insight for this user
       const existing = await query(
         `SELECT id FROM expense_insights
          WHERE scope_type = 'user' AND scope_id = $1::uuid
@@ -265,7 +229,6 @@ export async function generateDailyInsights(): Promise<number> {
       );
       if (existing.rows.length > 0) continue;
 
-      // Mark old summaries as stale
       await query(
         `UPDATE expense_insights SET is_stale = true
          WHERE scope_type = 'user' AND scope_id = $1::uuid
@@ -273,16 +236,16 @@ export async function generateDailyInsights(): Promise<number> {
         [user.id]
       );
 
-      // Build context for LLM
       const categories = summary.category_breakdown
         ? Object.entries(summary.category_breakdown)
             .map(([cat, amt]) => `${cat}: $${Number(amt).toFixed(2)}`)
             .join(', ')
         : 'No category data';
 
-      const changeStr = summary.pct_change != null
-        ? `${summary.pct_change > 0 ? '+' : ''}${summary.pct_change}% vs previous month`
-        : 'no prior period data';
+      const changeStr =
+        summary.pct_change != null
+          ? `${summary.pct_change > 0 ? '+' : ''}${summary.pct_change}% vs previous month`
+          : 'no prior period data';
 
       const contextStr =
         `Total spending: $${Number(summary.total_amount).toFixed(2)} (${changeStr}). ` +
@@ -293,7 +256,6 @@ export async function generateDailyInsights(): Promise<number> {
       try {
         template = await getLlmPromptTemplateByName('monthly_summary');
       } catch {
-        // Template not found — use a basic prompt
         logger.warn('monthly_summary template not found, using fallback');
         template = null;
       }
@@ -318,7 +280,6 @@ export async function generateDailyInsights(): Promise<number> {
         { temperature: 0.3, num_predict: 500 }
       );
 
-      // Extract a title from the first line or generate one
       const lines = response.content.trim().split('\n');
       const title = lines[0].replace(/^[#*]+\s*/, '').slice(0, 200) || 'Monthly Spending Summary';
 
@@ -353,13 +314,9 @@ export async function generateDailyInsights(): Promise<number> {
   return generated;
 }
 
-/**
- * Detect anomalies for users with recent expenses.
- */
 export async function detectAnomalies(): Promise<number> {
   let detected = 0;
 
-  // Find expense lines from last 24 hours that haven't been checked
   const recentLines = await query<{
     id: string;
     user_id: string;
@@ -385,7 +342,6 @@ export async function detectAnomalies(): Promise<number> {
     try {
       if (!line.category || Number(line.amount) === 0) continue;
 
-      // Use the detect_amount_anomaly PL/pgSQL function
       const anomalyResult = await query<{
         is_anomaly: boolean;
         z_score: number;
@@ -398,11 +354,9 @@ export async function detectAnomalies(): Promise<number> {
 
       const row = anomalyResult.rows[0];
       if (row && row.is_anomaly) {
-        const severity = Math.abs(row.z_score) >= 4 ? 'high'
-          : Math.abs(row.z_score) >= 3 ? 'medium'
-          : 'low';
+        const severity =
+          Math.abs(row.z_score) >= 4 ? 'high' : Math.abs(row.z_score) >= 3 ? 'medium' : 'low';
 
-        // Try to enhance explanation with LLM
         let explanation = row.explanation;
         try {
           let template;
@@ -476,7 +430,6 @@ export async function detectAnomalies(): Promise<number> {
     }
   }
 
-  // Also check for duplicate-looking charges
   const duplicates = await query<{
     user_id: string;
     report_id: string;
@@ -541,9 +494,6 @@ export async function detectAnomalies(): Promise<number> {
   return detected;
 }
 
-/**
- * Refresh materialized views used for analytics.
- */
 export async function refreshMaterializedViews(): Promise<void> {
   try {
     await query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_expense_analytics');

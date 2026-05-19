@@ -129,7 +129,7 @@ export interface Receipt {
   file_hash: string;
   mime_type: string;
   file_size: number;
-  parsed_data: Record<string, unknown> | null;
+  parsed_data: ParsedReceiptData | null;
   thumbnail_path: string | null;
   created_at: Date;
 }
