@@ -12,6 +12,7 @@ import {
   exchangeFacebookCode,
   loginWithOAuth,
 } from '../services/auth.service.js';
+import { deleteUser, updateUser } from '../services/user.service.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 import { ValidationError } from '../types/index.js';
 import {
@@ -327,6 +328,66 @@ authRouter.openapi(facebookCallbackRoute, async (c) => {
     user: { id: user.id, email: user.email },
     accessToken: tokens.accessToken,
   }, 200);
+});
+
+// Request account deletion route
+const deleteAccountRequestSchema = LoginRequestSchema;
+
+const deleteAccountRoute = createRoute({
+  method: 'post',
+  path: '/delete-account',
+  tags: ['Authentication'],
+  summary: 'Request account deletion',
+  description:
+    'Authenticate and permanently delete the account. If the account has associated expense reports, it will be deactivated and anonymized instead of hard-deleted.',
+  request: {
+    body: {
+      content: { 'application/json': { schema: deleteAccountRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Account deleted or deactivated successfully',
+      content: { 'application/json': { schema: MessageSchema } },
+    },
+    401: {
+      description: 'Invalid credentials',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    500: {
+      description: 'Internal server error',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+authRouter.openapi(deleteAccountRoute, async (c) => {
+  const { email, password } = c.req.valid('json');
+
+  // Authenticate the user — this verifies the password and throws if invalid
+  const { user } = await loginWithEmail(email, password);
+
+  try {
+    await deleteUser(user.id);
+    return c.json({ message: 'Your account and all associated data have been permanently deleted.' }, 200);
+  } catch {
+    // User has expense reports; deactivate and anonymize instead
+    await updateUser(user.id, {
+      isActive: false,
+      firstName: null,
+      lastName: null,
+      departmentId: null,
+      managerId: null,
+      costCenter: null,
+    });
+    return c.json(
+      {
+        message:
+          'Your account has been deactivated and personal information removed. Financial records are retained for auditing purposes.',
+      },
+      200
+    );
+  }
 });
 
 export { authRouter };
