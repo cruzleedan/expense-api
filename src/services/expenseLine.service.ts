@@ -273,6 +273,35 @@ export async function verifyLineOwnership(
   return line;
 }
 
+export async function listOrphanedExpenseLines(
+  userId: string,
+  params: PaginationParams
+): Promise<{ lines: ExpenseLine[]; total: number }> {
+  const where = and(
+    eq(expenseReports.userId, userId),
+    isNull(expenseLines.deletedAt),
+    sql`${expenseReports.deletedAt} IS NOT NULL`
+  );
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ line: expenseLines })
+      .from(expenseLines)
+      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
+      .where(where)
+      .orderBy(desc(expenseLines.createdAt))
+      .limit(params.limit)
+      .offset(getOffset(params)),
+    db
+      .select({ total: count() })
+      .from(expenseLines)
+      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
+      .where(where),
+  ]);
+
+  return { lines: rows.map((r) => r.line), total };
+}
+
 export async function listExpenseLinesForSync(
   userId: string,
   params: PaginationParams,

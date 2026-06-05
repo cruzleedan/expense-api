@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId, getUser } from '../middleware/auth.js';
 import type { JwtPayloadV3 } from '../types/index.js';
 import { isReportPendingApprovalByUser } from '../services/approval.service.js';
@@ -70,7 +71,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const userId = getUserId(c);
   const reportId = c.req.param('reportId')!;
   const query = c.req.valid('query');
@@ -92,7 +93,7 @@ const listHandler = async (c) => {
 
   const { lines, total } = await listExpenseLines(reportId, userId, paginationParams, skipOwnership);
 
-  return c.json(paginate(lines, total, paginationParams), 200);
+  return c.json(paginate(lines, total, paginationParams) as any, 200);
 };
 expenseLinesRouter.openapi(listRoute, listHandler);
 
@@ -134,14 +135,14 @@ const createLineRoute = createRoute({
   },
 });
 
-const createLineHandler = async (c) => {
+const createLineHandler: RouteHandler<typeof createLineRoute> = async (c) => {
   const userId = getUserId(c);
   const reportId = c.req.param('reportId')!;
   const input = c.req.valid('json');
 
   const line = await createExpenseLine(reportId, userId, input as CreateExpenseLineInput);
 
-  return c.json(line, 201);
+  return c.json(line as any, 201);
 };
 expenseLinesRouter.openapi(createLineRoute, createLineHandler);
 
@@ -183,14 +184,14 @@ const bulkCreateLineRoute = createRoute({
   },
 });
 
-const bulkCreateLineHandler = async (c) => {
+const bulkCreateLineHandler: RouteHandler<typeof bulkCreateLineRoute> = async (c) => {
   const userId = getUserId(c);
   const reportId = c.req.param('reportId')!;
   const input = c.req.valid('json');
 
   const result = await bulkCreateExpenseLines(reportId, userId, input.lines);
 
-  return c.json(result, 200);
+  return c.json(result as any, 200);
 };
 expenseLinesRouter.openapi(bulkCreateLineRoute, bulkCreateLineHandler);
 
@@ -226,13 +227,13 @@ const getLineRoute = createRoute({
   },
 });
 
-const getLineHandler = async (c) => {
+const getLineHandler: RouteHandler<typeof getLineRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const line = await getExpenseLineById(id, userId);
 
-  return c.json(line, 200);
+  return c.json(line as any, 200);
 };
 expenseLineDirectRouter.openapi(getLineRoute, getLineHandler);
 
@@ -275,14 +276,14 @@ const updateLineRoute = createRoute({
   },
 });
 
-const updateLineHandler = async (c) => {
+const updateLineHandler: RouteHandler<typeof updateLineRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   const line = await updateExpenseLine(id, userId, input as UpdateExpenseLineInput);
 
-  return c.json(line, 200);
+  return c.json(line as any, 200);
 };
 expenseLineDirectRouter.openapi(updateLineRoute, updateLineHandler);
 
@@ -318,7 +319,7 @@ const deleteLineRoute = createRoute({
   },
 });
 
-const deleteLineHandler = async (c) => {
+const deleteLineHandler: RouteHandler<typeof deleteLineRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -352,12 +353,12 @@ const syncLinesRoute = createRoute({
   },
 });
 
-const syncLinesHandler = async (c) => {
+const syncLinesHandler: RouteHandler<typeof syncLinesRoute> = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
   const params = { page: query.page, limit: query.limit, sortOrder: 'asc' as const };
   const { lines, total } = await listExpenseLinesForSync(userId, params, query.updatedSince);
-  return c.json(paginate(lines, total, params), 200);
+  return c.json(paginate(lines, total, params) as any, 200);
 };
 expenseLineDirectRouter.openapi(syncLinesRoute, syncLinesHandler);
 

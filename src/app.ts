@@ -24,6 +24,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { insightsRouter } from './routes/insights.js';
 import { anomaliesRouter } from './routes/anomalies.js';
 import { adminAnalyticsRouter } from './routes/adminAnalytics.js';
+import { expensesRouter } from './routes/expenses.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -65,6 +66,7 @@ app.use('/v1/analytics/*', rateLimit());
 app.use('/v1/insights/*', rateLimit());
 app.use('/v1/anomalies/*', rateLimit());
 app.use('/v1/admin/*', rateLimit());
+app.use('/v1/expenses/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -86,6 +88,7 @@ app.route('/v1/analytics', analyticsRouter);
 app.route('/v1/insights', insightsRouter);
 app.route('/v1/anomalies', anomaliesRouter);
 app.route('/v1/admin/analytics', adminAnalyticsRouter);
+app.route('/v1/expenses', expensesRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
@@ -125,6 +128,7 @@ app.doc('/openapi.json', {
     { name: 'Insights', description: 'Proactive spending insights and recommendations' },
     { name: 'Anomalies', description: 'Expense anomaly detection and review' },
     { name: 'Admin Analytics', description: 'Admin analytics dashboard for LLM usage and org-wide metrics' },
+    { name: 'Expenses', description: 'Unified view of expense reports and orphaned expense lines' },
   ],
   security: [{ Bearer: [] }],
   // @ts-expect-error @hono/zod-openapi omits `components` from its doc type but passes it through to the OpenAPI spec at runtime
@@ -148,6 +152,7 @@ app.get('/', (c) => {
   return c.json({
     name: 'Expense API',
     version: '3.0.0',
+    environment: process.env.NODE_ENV ?? 'development',
     documentation: '/docs',
     openapi: '/openapi.json',
   });
