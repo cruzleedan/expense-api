@@ -63,10 +63,10 @@ export async function listExpenses(
 
   const [reportRows, lineRows] = await Promise.all([
     reportIds.length > 0
-      ? db.execute<ExpenseReport>(sql`SELECT * FROM ${expenseReports} WHERE id = ANY(${reportIds})`)
+      ? db.execute<ExpenseReport>(sql`SELECT * FROM ${expenseReports} WHERE id = ANY(ARRAY[${sql.join(reportIds.map((id) => sql`${id}::uuid`), sql`, `)}])`)
       : Promise.resolve({ rows: [] as ExpenseReport[] }),
     lineIds.length > 0
-      ? db.execute<ExpenseLine>(sql`SELECT * FROM ${expenseLines} WHERE id = ANY(${lineIds})`)
+      ? db.execute<ExpenseLine>(sql`SELECT * FROM ${expenseLines} WHERE id = ANY(ARRAY[${sql.join(lineIds.map((id) => sql`${id}::uuid`), sql`, `)}])`)
       : Promise.resolve({ rows: [] as ExpenseLine[] }),
   ]);
 
