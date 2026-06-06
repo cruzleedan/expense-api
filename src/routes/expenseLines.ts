@@ -140,7 +140,7 @@ const createLineHandler: RouteHandler<typeof createLineRoute> = async (c) => {
   const reportId = c.req.param('reportId')!;
   const input = c.req.valid('json');
 
-  const line = await createExpenseLine(reportId, userId, input as CreateExpenseLineInput);
+  const line = await createExpenseLine(userId, input as CreateExpenseLineInput, reportId);
 
   return c.json(line as any, 201);
 };
@@ -194,6 +194,46 @@ const bulkCreateLineHandler: RouteHandler<typeof bulkCreateLineRoute> = async (c
   return c.json(result as any, 200);
 };
 expenseLinesRouter.openapi(bulkCreateLineRoute, bulkCreateLineHandler);
+
+// Standalone create: POST /expense-lines — create a line without a report
+const createStandaloneLineRoute = createRoute({
+  method: 'post',
+  path: '/',
+  tags: ['Expense Lines'],
+  summary: 'Create standalone expense line',
+  description: 'Create an expense line without an expense report. The line can later be attached to a report.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: {
+      content: { 'application/json': { schema: CreateExpenseLineSchema } },
+    },
+  },
+  responses: {
+    201: {
+      description: 'Expense line created',
+      content: { 'application/json': { schema: ExpenseLineSchema } },
+    },
+    400: {
+      description: 'Validation error',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const createStandaloneLineHandler: RouteHandler<typeof createStandaloneLineRoute> = async (c) => {
+  const userId = getUserId(c);
+  const input = c.req.valid('json');
+
+  const line = await createExpenseLine(userId, input as CreateExpenseLineInput);
+
+  return c.json(line as any, 201);
+};
+expenseLineDirectRouter.openapi(createStandaloneLineRoute, createStandaloneLineHandler);
 
 // Get expense line by ID (direct access)
 const getLineRoute = createRoute({

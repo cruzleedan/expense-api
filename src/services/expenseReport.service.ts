@@ -1,14 +1,39 @@
 import { db } from '../db/drizzle.js';
-import { expenseReports, users, userRoles, rolePermissions, permissions } from '../db/schema.js';
+import { expenseReports, expenseLines, users, userRoles, rolePermissions, permissions } from '../db/schema.js';
 import type { ExpenseReport } from '../db/schema.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
 import {
-  eq, and, or, ilike, asc, desc, count, gt, isNull, sql, type SQL,
+  eq, and, or, ilike, asc, desc, count, gt, isNull, sql, sum, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 import { canAccessReport } from './approval.service.js';
 
 export type { ExpenseReport };
+
+/**
+ * Coerce all numeric/decimal fields that pg returns as strings to JS numbers,
+ * and replace totalAmount/netAmount with the live sum from expense_lines.
+ */
+function toResponse(report: ExpenseReport, computedTotal: number): ExpenseReport {
+  return {
+    ...report,
+    totalAmount: computedTotal,
+    netAmount: computedTotal,
+    exchangeRate: report.exchangeRate != null ? Number(report.exchangeRate) : null,
+    baseCurrencyTotal: report.baseCurrencyTotal != null ? Number(report.baseCurrencyTotal) : null,
+  };
+}
+
+/**
+ * Fetch the live SUM(amount) of non-deleted expense lines for a report.
+ */
+async function computeTotal(reportId: string): Promise<number> {
+  const [row] = await db
+    .select({ total: sum(expenseLines.amount) })
+    .from(expenseLines)
+    .where(and(eq(expenseLines.reportId, reportId), isNull(expenseLines.deletedAt)));
+  return Number(row?.total ?? 0);
+}
 
 export interface CreateExpenseReportInput {
   clientId?: string;
@@ -70,8 +95,8 @@ export async function createExpenseReport(
       title: input.title,
       description: input.description ?? null,
       reportDate: input.reportDate ?? today,
-      totalAmount: input.totalAmount ?? 0,
-      netAmount: input.netAmount ?? 0,
+      totalAmount: 0,
+      netAmount: 0,
       currency: input.currency ?? 'USD',
       projectId: input.projectId ?? null,
       projectName: input.projectName ?? null,
@@ -83,7 +108,7 @@ export async function createExpenseReport(
     })
     .returning();
 
-  return result;
+  return toResponse(result, 0);
 }
 
 export async function getExpenseReportById(
@@ -112,7 +137,8 @@ export async function getExpenseReportById(
     }
   }
 
-  return report;
+  const computedTotal = await computeTotal(reportId);
+  return toResponse(report, computedTotal);
 }
 
 export async function listExpenseReports(
@@ -168,7 +194,23 @@ export async function listExpenseReports(
     db.select({ total: count() }).from(expenseReports).where(where),
   ]);
 
-  return { reports: rows, total };
+  // Compute live totals for all reports in one query
+  const reportIds = rows.map((r) => r.id);
+  const totalsByReport = reportIds.length > 0
+    ? await db
+        .select({ reportId: expenseLines.reportId, total: sum(expenseLines.amount) })
+        .from(expenseLines)
+        .where(and(
+          sql`${expenseLines.reportId} = ANY(ARRAY[${sql.join(reportIds.map(id => sql`${id}::uuid`), sql`, `)}])`,
+          isNull(expenseLines.deletedAt)
+        ))
+        .groupBy(expenseLines.reportId)
+    : [];
+
+  const totalsMap = new Map(totalsByReport.map((r) => [r.reportId, Number(r.total ?? 0)]));
+  const reports = rows.map((r) => toResponse(r, totalsMap.get(r.id) ?? 0));
+
+  return { reports, total };
 }
 
 export async function updateExpenseReport(
@@ -202,13 +244,16 @@ export async function updateExpenseReport(
     return getExpenseReportById(reportId, userId, permissions_);
   }
 
-  const [result] = await db
-    .update(expenseReports)
-    .set({ ...updates, version: sql`version + 1` })
-    .where(eq(expenseReports.id, reportId))
-    .returning();
+  const [[result], computedTotal] = await Promise.all([
+    db
+      .update(expenseReports)
+      .set({ ...updates, version: sql`version + 1` })
+      .where(eq(expenseReports.id, reportId))
+      .returning(),
+    computeTotal(reportId),
+  ]);
 
-  return result;
+  return toResponse(result, computedTotal);
 }
 
 export async function deleteExpenseReport(

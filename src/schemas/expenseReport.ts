@@ -3,6 +3,13 @@ import { PaginationMetaSchema } from './common.js';
 
 export const ExpenseReportStatusSchema = z.enum(['draft', 'pending', 'submitted', 'approved', 'rejected', 'returned', 'posted', 'paid']);
 
+// pg returns NUMERIC/DECIMAL columns as strings; coerce to number at the boundary
+const numericField = z.coerce.number();
+// Normalize pg timestamps ("2026-03-22 09:47:23.412843+00") to valid ISO 8601 UTC strings
+const toISO = (v: string) => new Date(v).toISOString();
+const datetimeField = z.string().transform(toISO);
+const datetimeFieldNullable = z.string().transform(toISO).nullable();
+
 export const ExpenseReportSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
@@ -10,8 +17,8 @@ export const ExpenseReportSchema = z.object({
   version: z.number().int(),
   title: z.string(),
   reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  totalAmount: z.number(),
-  netAmount: z.number(),
+  totalAmount: numericField,
+  netAmount: numericField,
   currency: z.string().length(3),
   description: z.string().nullable(),
   status: ExpenseReportStatusSchema,
@@ -23,16 +30,16 @@ export const ExpenseReportSchema = z.object({
   // Workflow / audit
   submissionComment: z.string().nullable(),
   rejectionReason: z.string().nullable(),
-  submittedAt: z.string().datetime().nullable(),
-  approvedAt: z.string().datetime().nullable(),
-  postedAt: z.string().datetime().nullable(),
-  paidAt: z.string().datetime().nullable(),
+  submittedAt: datetimeFieldNullable,
+  approvedAt: datetimeFieldNullable,
+  postedAt: datetimeFieldNullable,
+  paidAt: datetimeFieldNullable,
   paidBy: z.string().nullable(),
-  exchangeRate: z.number().nullable(),
-  baseCurrencyTotal: z.number().nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  deletedAt: z.string().datetime().nullable(),
+  exchangeRate: numericField.nullable(),
+  baseCurrencyTotal: numericField.nullable(),
+  createdAt: datetimeField,
+  updatedAt: datetimeField,
+  deletedAt: datetimeFieldNullable,
 }).openapi('ExpenseReport');
 
 export const CreateExpenseReportSchema = z.object({
@@ -54,6 +61,10 @@ export const CreateExpenseReportSchema = z.object({
   submissionComment: z.string().max(2000).optional().openapi({ example: 'Approved for team offsite expenses' }),
   exchangeRate: z.number().positive().optional().openapi({ example: 1.0 }),
   baseCurrencyTotal: z.number().optional().openapi({ example: 1234.56 }),
+  lineIds: z.array(z.string().uuid()).optional().openapi({
+    example: ['661f9511-f3ac-52e5-b827-557766551111'],
+    description: 'Optional list of orphaned expense line IDs to attach to this report on creation',
+  }),
 }).openapi('CreateExpenseReport');
 
 export const UpdateExpenseReportSchema = z.object({

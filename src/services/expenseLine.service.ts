@@ -71,11 +71,13 @@ export interface UpdateExpenseLineInput {
 }
 
 export async function createExpenseLine(
-  reportId: string,
   userId: string,
-  input: CreateExpenseLineInput
+  input: CreateExpenseLineInput,
+  reportId?: string
 ): Promise<ExpenseLine> {
-  await verifyReportOwnership(reportId, userId);
+  if (reportId) {
+    await verifyReportOwnership(reportId, userId);
+  }
 
   // Idempotent create
   if (input.clientId) {
@@ -91,7 +93,8 @@ export async function createExpenseLine(
   const [result] = await db
     .insert(expenseLines)
     .values({
-      reportId,
+      reportId: reportId ?? null,
+      userId,
       clientId: input.clientId ?? null,
       description: input.description,
       amount: input.amount,
@@ -130,9 +133,8 @@ export async function getExpenseLineById(
   userId: string
 ): Promise<ExpenseLine> {
   const [result] = await db
-    .select({ line: expenseLines, reportUserId: expenseReports.userId })
+    .select()
     .from(expenseLines)
-    .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
     .where(eq(expenseLines.id, lineId))
     .limit(1);
 
@@ -140,11 +142,23 @@ export async function getExpenseLineById(
     throw new NotFoundError('Expense line');
   }
 
-  if (result.reportUserId !== userId) {
-    throw new ForbiddenError('Access denied to this expense line');
+  // Ownership: either directly via userId, or via the parent report
+  if (result.userId !== userId) {
+    if (result.reportId) {
+      const [report] = await db
+        .select({ userId: expenseReports.userId })
+        .from(expenseReports)
+        .where(eq(expenseReports.id, result.reportId))
+        .limit(1);
+      if (report?.userId !== userId) {
+        throw new ForbiddenError('Access denied to this expense line');
+      }
+    } else {
+      throw new ForbiddenError('Access denied to this expense line');
+    }
   }
 
-  return result.line;
+  return result;
 }
 
 export async function listExpenseLines(
@@ -278,28 +292,63 @@ export async function listOrphanedExpenseLines(
   params: PaginationParams
 ): Promise<{ lines: ExpenseLine[]; total: number }> {
   const where = and(
-    eq(expenseReports.userId, userId),
+    eq(expenseLines.userId, userId),
     isNull(expenseLines.deletedAt),
-    sql`${expenseReports.deletedAt} IS NOT NULL`
+    isNull(expenseLines.reportId)
   );
 
   const [rows, [{ total }]] = await Promise.all([
     db
-      .select({ line: expenseLines })
+      .select()
       .from(expenseLines)
-      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
       .where(where)
       .orderBy(desc(expenseLines.createdAt))
       .limit(params.limit)
       .offset(getOffset(params)),
-    db
-      .select({ total: count() })
-      .from(expenseLines)
-      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
-      .where(where),
+    db.select({ total: count() }).from(expenseLines).where(where),
   ]);
 
-  return { lines: rows.map((r) => r.line), total };
+  return { lines: rows, total };
+}
+
+export async function attachLinesToReport(
+  reportId: string,
+  userId: string,
+  lineIds: string[]
+): Promise<void> {
+  const [report] = await db
+    .select({ userId: expenseReports.userId })
+    .from(expenseReports)
+    .where(and(eq(expenseReports.id, reportId), isNull(expenseReports.deletedAt)))
+    .limit(1);
+  if (!report) throw new NotFoundError('Expense report');
+  if (report.userId !== userId) throw new ForbiddenError('Access denied to this expense report');
+
+  // Verify all lines belong to this user and are currently unattached
+  const owned = await db
+    .select({ id: expenseLines.id })
+    .from(expenseLines)
+    .where(
+      and(
+        eq(expenseLines.userId, userId),
+        isNull(expenseLines.reportId),
+        isNull(expenseLines.deletedAt),
+        sql`${expenseLines.id} = ANY(ARRAY[${sql.join(lineIds.map((id) => sql`${id}::uuid`), sql`, `)}])`
+      )
+    );
+
+  const foundIds = new Set(owned.map((r) => r.id));
+  const missing = lineIds.filter((id) => !foundIds.has(id));
+  if (missing.length > 0) {
+    throw new ForbiddenError(`Lines not found or already attached: ${missing.join(', ')}`);
+  }
+
+  await db
+    .update(expenseLines)
+    .set({ reportId, updatedAt: sql`NOW()`, version: sql`version + 1` })
+    .where(
+      sql`id = ANY(ARRAY[${sql.join(lineIds.map((id) => sql`${id}::uuid`), sql`, `)}])`
+    );
 }
 
 export async function listExpenseLinesForSync(
@@ -308,28 +357,23 @@ export async function listExpenseLinesForSync(
   updatedSince?: string
 ): Promise<{ lines: ExpenseLine[]; total: number }> {
   const conditions: (SQL | undefined)[] = [
-    eq(expenseReports.userId, userId),
+    eq(expenseLines.userId, userId),
     updatedSince ? gt(expenseLines.updatedAt, updatedSince) : undefined,
   ];
   const where = and(...(conditions.filter(Boolean) as SQL[]));
 
   const [rows, [{ total }]] = await Promise.all([
     db
-      .select({ line: expenseLines })
+      .select()
       .from(expenseLines)
-      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
       .where(where)
       .orderBy(desc(expenseLines.updatedAt))
       .limit(params.limit)
       .offset(getOffset(params)),
-    db
-      .select({ total: count() })
-      .from(expenseLines)
-      .innerJoin(expenseReports, eq(expenseLines.reportId, expenseReports.id))
-      .where(where),
+    db.select({ total: count() }).from(expenseLines).where(where),
   ]);
 
-  return { lines: rows.map((r) => r.line), total };
+  return { lines: rows, total };
 }
 
 export interface BulkCreateExpenseLineInput {

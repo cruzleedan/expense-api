@@ -322,7 +322,8 @@ CREATE TABLE IF NOT EXISTS expense_categories (
 -- Expense lines (v4.0 with embeddings and analytics metadata)
 CREATE TABLE IF NOT EXISTS expense_lines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    report_id UUID NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE,
+    report_id UUID REFERENCES expense_reports(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     description VARCHAR(255) NOT NULL,
     amount DECIMAL(12,2) NOT NULL DEFAULT 0,
     original_amount DECIMAL(12,2),  -- If converted from another currency

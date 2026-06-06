@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId, getUser } from '../middleware/auth.js';
 import type { JwtPayloadV3 } from '../types/index.js';
 import {
@@ -17,6 +18,10 @@ import {
   ExpenseReportListResponseSchema,
 } from '../schemas/expenseReport.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
+import { attachLinesToReport } from '../services/expenseLine.service.js';
+
+const serializeReport = (r: unknown) => ExpenseReportSchema.parse(r);
+const serializeReports = (rs: unknown[]) => rs.map(serializeReport);
 
 const expenseReportsRouter = new OpenAPIHono();
 
@@ -50,7 +55,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
 
@@ -69,7 +74,8 @@ const listHandler = async (c) => {
     query.updatedSince
   );
 
-  return c.json(paginate(reports, total, paginationParams), 200);
+  const serialized = serializeReports(reports);
+  return c.json(paginate(serialized as any, total, paginationParams), 200);
 };
 expenseReportsRouter.openapi(listRoute, listHandler);
 
@@ -103,13 +109,17 @@ const createRoute_ = createRoute({
   },
 });
 
-const createHandler = async (c) => {
+const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const userId = getUserId(c);
   const input = c.req.valid('json');
 
   const report = await createExpenseReport(userId, input);
 
-  return c.json(report, 201);
+  if (input.lineIds && input.lineIds.length > 0) {
+    await attachLinesToReport(report.id, userId, input.lineIds);
+  }
+
+  return c.json(serializeReport(report), 201);
 };
 expenseReportsRouter.openapi(createRoute_, createHandler);
 
@@ -145,7 +155,7 @@ const getRoute = createRoute({
   },
 });
 
-const getHandler = async (c) => {
+const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -155,7 +165,7 @@ const getHandler = async (c) => {
 
   const report = await getExpenseReportById(id, userId, permissions);
 
-  return c.json(report, 200);
+  return c.json(serializeReport(report), 200);
 };
 expenseReportsRouter.openapi(getRoute, getHandler);
 
@@ -198,7 +208,7 @@ const updateRoute = createRoute({
   },
 });
 
-const updateHandler = async (c) => {
+const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
@@ -209,7 +219,7 @@ const updateHandler = async (c) => {
 
   const report = await updateExpenseReport(id, userId, input, permissions);
 
-  return c.json(report, 200);
+  return c.json(serializeReport(report), 200);
 };
 expenseReportsRouter.openapi(updateRoute, updateHandler);
 
@@ -245,7 +255,7 @@ const deleteRoute = createRoute({
   },
 });
 
-const deleteHandler = async (c) => {
+const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 

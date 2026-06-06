@@ -3,7 +3,8 @@ import { PaginationMetaSchema } from './common.js';
 
 export const ExpenseLineSchema = z.object({
   id: z.string().uuid(),
-  reportId: z.string().uuid(),
+  reportId: z.string().uuid().nullable(),
+  userId: z.string().uuid().nullable(),
   clientId: z.string().max(36).nullable(),
   version: z.number().int(),
   description: z.string(),
