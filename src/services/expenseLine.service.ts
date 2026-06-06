@@ -3,6 +3,7 @@ import { expenseLines, expenseReports, receipts, receiptLineAssociations } from 
 import type { ExpenseLine } from '../db/schema.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
+import { propagateReceiptReportId } from './receipt.service.js';
 import { logger } from '../utils/logger.js';
 import {
   eq, and, or, ilike, asc, desc, count, gt, isNull, sql, type SQL,
@@ -349,6 +350,9 @@ export async function attachLinesToReport(
     .where(
       sql`id = ANY(ARRAY[${sql.join(lineIds.map((id) => sql`${id}::uuid`), sql`, `)}])`
     );
+
+  // Backfill report_id on any orphaned receipts linked to these lines
+  await propagateReceiptReportId(reportId, lineIds);
 }
 
 export async function listExpenseLinesForSync(

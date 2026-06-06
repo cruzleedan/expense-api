@@ -26,7 +26,8 @@ const ALLOWED_MIME_TYPES = [
 ];
 
 export interface UploadReceiptInput {
-  reportId: string;
+  reportId?: string;
+  lineId?: string;
   file: Buffer;
   fileName: string;
   mimeType: string;
@@ -44,74 +45,74 @@ export async function uploadReceipt(
   userId: string,
   input: UploadReceiptInput
 ): Promise<UploadReceiptResult> {
-  // Verify user owns the report
-  await verifyReportOwnership(input.reportId, userId);
+  // If a reportId is given, verify ownership
+  if (input.reportId) {
+    await verifyReportOwnership(input.reportId, userId);
+  }
 
-  // Validate file type
+  // If a lineId is given, verify it belongs to the user
+  if (input.lineId) {
+    const lineResult = await query<{ user_id: string; report_id: string | null }>(
+      'SELECT user_id, report_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
+      [input.lineId]
+    );
+    if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
+    if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
+    // Inherit reportId from the line if not explicitly provided
+    if (!input.reportId && lineResult.rows[0].report_id) {
+      input.reportId = lineResult.rows[0].report_id;
+    }
+  }
+
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
-    throw new ValidationError(
-      `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
-    );
+    throw new ValidationError(`Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`);
   }
 
-  // Validate file size
   if (input.file.length > env.MAX_FILE_SIZE) {
-    throw new ValidationError(
-      `File too large. Maximum size: ${env.MAX_FILE_SIZE / 1024 / 1024}MB`
-    );
+    throw new ValidationError(`File too large. Maximum size: ${env.MAX_FILE_SIZE / 1024 / 1024}MB`);
   }
 
-  // Compute hash for deduplication
   const fileHash = sha256(input.file);
 
-  // Check for duplicate
   const existingResult = await query<{ id: string }>(
     'SELECT id FROM receipts WHERE file_hash = $1',
     [fileHash]
   );
-
   if (existingResult.rows.length > 0) {
     throw new ConflictError('Duplicate receipt: this file has already been uploaded');
   }
 
-  // Save file to storage
   const storage = getStorage();
   const filePath = await storage.save(input.file, input.fileName);
 
-  // Create receipt record
   const result = await query<Receipt>(
-    `INSERT INTO receipts (report_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO receipts (report_id, user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
-    [input.reportId, filePath, input.fileName, fileHash, input.mimeType, input.file.length, null]
+    [input.reportId ?? null, userId, filePath, input.fileName, fileHash, input.mimeType, input.file.length, null]
   );
 
   const receipt = result.rows[0];
   let parsedData: ParsedReceiptData | null = null;
 
-  // TODO: Generate thumbnail for image receipts (see confirmUpload for details)
+  if (input.lineId) {
+    await query(
+      `INSERT INTO receipt_line_associations (receipt_id, line_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [receipt.id, input.lineId]
+    );
+  }
 
-  // If ICR requested, parse the receipt
   if (input.icr) {
     const fullPath = `${env.UPLOAD_DIR}/${filePath}`;
     parsedData = await parseReceipt(fullPath, input.mimeType);
-
     if (parsedData) {
-      // Update receipt with parsed data
-      await query(
-        'UPDATE receipts SET parsed_data = $1 WHERE id = $2',
-        [JSON.stringify(parsedData), receipt.id]
-      );
+      await query('UPDATE receipts SET parsed_data = $1 WHERE id = $2', [JSON.stringify(parsedData), receipt.id]);
       receipt.parsed_data = parsedData;
     }
   }
 
-  logger.info('Receipt uploaded', {
-    receiptId: receipt.id,
-    reportId: input.reportId,
-    icr: input.icr,
-    parsed: !!parsedData,
-  });
+  logger.info('Receipt uploaded', { receiptId: receipt.id, reportId: input.reportId ?? null, lineId: input.lineId ?? null, icr: input.icr, parsed: !!parsedData });
 
   return { receipt, parsedData };
 }
@@ -120,11 +121,8 @@ export async function getReceiptById(
   receiptId: string,
   userId: string
 ): Promise<Receipt> {
-  const result = await query<Receipt & { user_id: string }>(
-    `SELECT r.*, er.user_id
-     FROM receipts r
-     JOIN expense_reports er ON r.report_id = er.id
-     WHERE r.id = $1`,
+  const result = await query<Receipt>(
+    'SELECT * FROM receipts WHERE id = $1',
     [receiptId]
   );
 
@@ -138,8 +136,7 @@ export async function getReceiptById(
     throw new ForbiddenError('Access denied to this receipt');
   }
 
-  const { user_id: _, ...receiptData } = receipt;
-  return receiptData as Receipt;
+  return receipt;
 }
 
 export async function listReceipts(
@@ -216,33 +213,23 @@ export async function associateReceiptWithLines(
   lineIds: string[],
   userId: string
 ): Promise<void> {
-  const receipt = await getReceiptById(receiptId, userId);
+  await getReceiptById(receiptId, userId);
 
-  // Verify all lines belong to the same report as the receipt
+  // Verify all lines belong to this user
   for (const lineId of lineIds) {
-    const lineResult = await query<ExpenseLine>(
-      'SELECT report_id FROM expense_lines WHERE id = $1',
+    const lineResult = await query<{ user_id: string }>(
+      'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
       [lineId]
     );
-
-    if (lineResult.rows.length === 0) {
-      throw new NotFoundError(`Expense line ${lineId}`);
-    }
-
-    if (lineResult.rows[0].report_id !== receipt.report_id) {
-      throw new ValidationError(
-        'Receipt can only be associated with expense lines from the same report'
-      );
-    }
+    if (lineResult.rows.length === 0) throw new NotFoundError(`Expense line ${lineId}`);
+    if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError(`Access denied to expense line ${lineId}`);
   }
 
-  // Use transaction to ensure atomicity
   await transaction(async (client) => {
     for (const lineId of lineIds) {
       await client.query(
         `INSERT INTO receipt_line_associations (receipt_id, line_id)
-         VALUES ($1, $2)
-         ON CONFLICT (receipt_id, line_id) DO NOTHING`,
+         VALUES ($1, $2) ON CONFLICT (receipt_id, line_id) DO NOTHING`,
         [receiptId, lineId]
       );
     }
@@ -303,7 +290,8 @@ export async function getReceiptFile(
 }
 
 export interface RequestUploadUrlInput {
-  reportId: string;
+  reportId?: string;
+  lineId?: string;
   fileName: string;
   mimeType: string;
   fileSize: number;
@@ -319,8 +307,17 @@ export async function requestUploadUrl(
   userId: string,
   input: RequestUploadUrlInput
 ): Promise<RequestUploadUrlResult> {
-  // Verify user owns the report
-  await verifyReportOwnership(input.reportId, userId);
+  if (input.reportId) {
+    await verifyReportOwnership(input.reportId, userId);
+  }
+  if (input.lineId) {
+    const lineResult = await query<{ user_id: string }>(
+      'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
+      [input.lineId]
+    );
+    if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
+    if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
+  }
 
   // Validate file type
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
@@ -359,7 +356,8 @@ export async function requestUploadUrl(
 }
 
 export interface ConfirmUploadInput {
-  reportId: string;
+  reportId?: string;
+  lineId?: string;
   key: string;
   fileName: string;
   mimeType: string;
@@ -372,8 +370,20 @@ export async function confirmUpload(
   userId: string,
   input: ConfirmUploadInput
 ): Promise<UploadReceiptResult> {
-  // Verify user owns the report
-  await verifyReportOwnership(input.reportId, userId);
+  if (input.reportId) {
+    await verifyReportOwnership(input.reportId, userId);
+  }
+  if (input.lineId) {
+    const lineResult = await query<{ user_id: string; report_id: string | null }>(
+      'SELECT user_id, report_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
+      [input.lineId]
+    );
+    if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
+    if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
+    if (!input.reportId && lineResult.rows[0].report_id) {
+      input.reportId = lineResult.rows[0].report_id;
+    }
+  }
 
   // Validate file type
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
@@ -402,26 +412,24 @@ export async function confirmUpload(
     throw new ValidationError('File not found in storage. Upload may have failed.');
   }
 
-  // Create receipt record
   const result = await query<Receipt>(
-    `INSERT INTO receipts (report_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO receipts (report_id, user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
-    [input.reportId, input.key, input.fileName, input.fileHash, input.mimeType, input.fileSize, null]
+    [input.reportId ?? null, userId, input.key, input.fileName, input.fileHash, input.mimeType, input.fileSize, null]
   );
 
   const receipt = result.rows[0];
   let parsedData: ParsedReceiptData | null = null;
 
-  // TODO: Generate thumbnail for image receipts
-  // For image MIME types (image/jpeg, image/png, etc.), generate a thumbnail
-  // 1. Download the file from storage
-  // 2. Use sharp or similar library to resize to 256x256
-  // 3. Upload thumbnail to storage with a thumbnail key
-  // 4. Update receipt.thumbnail_path with the thumbnail key
-  // 5. Generate presigned URL for the thumbnail if using S3
+  if (input.lineId) {
+    await query(
+      `INSERT INTO receipt_line_associations (receipt_id, line_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [receipt.id, input.lineId]
+    );
+  }
 
-  // If ICR requested, parse the receipt
   if (input.icr) {
     // For S3, get the file buffer and parse directly
     const fileBuffer = await storage.get(input.key);
@@ -471,6 +479,23 @@ export async function getReceiptDownloadUrl(
     fileName: receipt.file_name,
     mimeType: receipt.mime_type,
   };
+}
+
+/**
+ * When expense lines are attached to a report, backfill report_id on any
+ * receipts linked to those lines that don't yet have a report.
+ */
+export async function propagateReceiptReportId(reportId: string, lineIds: string[]): Promise<void> {
+  if (lineIds.length === 0) return;
+  await query(
+    `UPDATE receipts r
+     SET report_id = $1
+     FROM receipt_line_associations rla
+     WHERE rla.receipt_id = r.id
+       AND rla.line_id = ANY($2::uuid[])
+       AND r.report_id IS NULL`,
+    [reportId, lineIds]
+  );
 }
 
 /**

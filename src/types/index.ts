@@ -123,7 +123,8 @@ export interface ExpenseLine {
 
 export interface Receipt {
   id: string;
-  report_id: string;
+  report_id: string | null;
+  user_id: string | null;
   file_path: string;
   file_name: string;
   file_hash: string;

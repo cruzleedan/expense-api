@@ -393,7 +393,8 @@ CREATE TABLE IF NOT EXISTS expense_lines (
 -- Receipts (v4.0 with OCR and semantic search)
 CREATE TABLE IF NOT EXISTS receipts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    report_id UUID NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE,
+    report_id UUID REFERENCES expense_reports(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     file_path VARCHAR(500) NOT NULL,
     file_name VARCHAR(255) NOT NULL,
     file_hash VARCHAR(64) NOT NULL UNIQUE,

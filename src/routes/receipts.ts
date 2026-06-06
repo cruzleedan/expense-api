@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import {
   uploadReceipt,
@@ -81,9 +82,9 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId');
+  const reportId = c.req.param('reportId') ?? '';
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -96,7 +97,7 @@ const listHandler = async (c) => {
 
   const { receipts, total } = await listReceipts(reportId, userId, paginationParams);
 
-  return c.json(paginate(receipts, total, paginationParams), 200);
+  return c.json(paginate(receipts, total, paginationParams) as any, 200);
 };
 receiptsRouter.openapi(listRoute, listHandler);
 
@@ -141,13 +142,14 @@ const uploadRoute = createRoute({
   },
 });
 
-const uploadHandler = async (c) => {
+const uploadHandler: RouteHandler<typeof uploadRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string;
+  const reportId = c.req.param('reportId') as string | undefined;
 
   const formData = await c.req.formData();
   const file = formData.get('file');
   const icrParam = formData.get('icr');
+  const lineId = formData.get('lineId')?.toString() ?? undefined;
 
   if (!file || !(file instanceof File)) {
     throw new ValidationError('File is required');
@@ -157,7 +159,8 @@ const uploadHandler = async (c) => {
   const icr = parseIcrParam(icrParam?.toString());
 
   const result = await uploadReceipt(userId, {
-    reportId,
+    reportId: reportId || undefined,
+    lineId,
     file: fileBuffer,
     fileName: file.name,
     mimeType: file.type,
@@ -168,10 +171,10 @@ const uploadHandler = async (c) => {
     return c.json({
       receipt: result.receipt,
       parsedData: result.parsedData,
-    }, 201);
+    } as any, 201);
   }
 
-  return c.json({ receipt: result.receipt }, 201);
+  return c.json({ receipt: result.receipt } as any, 201);
 };
 receiptsRouter.openapi(uploadRoute, uploadHandler);
 
@@ -207,15 +210,121 @@ const getReceiptRoute = createRoute({
   },
 });
 
-const getReceiptHandler = async (c) => {
+const getReceiptHandler: RouteHandler<typeof getReceiptRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const receipt = await getReceiptById(id, userId);
 
-  return c.json(receipt, 200);
+  return c.json(receipt as any, 200);
 };
 receiptDirectRouter.openapi(getReceiptRoute, getReceiptHandler);
+
+// Standalone upload: POST /receipts — upload without a report, optionally associate to a line
+const standaloneUploadRoute = createRoute({
+  method: 'post',
+  path: '/upload',
+  tags: ['Receipts'],
+  summary: 'Upload receipt (standalone)',
+  description: 'Upload a receipt without an expense report. Pass `lineId` in the form to immediately associate it with an expense line.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: {
+      content: {
+        'multipart/form-data': {
+          schema: z.object({
+            file: z.any().openapi({ type: 'string', format: 'binary', description: 'Receipt file (JPEG, PNG, GIF, WebP, PDF)' }),
+            icr: z.string().optional().openapi({ description: 'Set to "true" or "Y" to enable receipt parsing' }),
+            lineId: z.string().optional().openapi({ description: 'Expense line UUID to associate with this receipt' }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: 'Receipt uploaded', content: { 'application/json': { schema: ReceiptUploadResponseSchema } } },
+    400: { description: 'Validation error', content: { 'application/json': { schema: ErrorSchema } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorSchema } } },
+    403: { description: 'Forbidden', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Duplicate receipt', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const standaloneUploadHandler: RouteHandler<typeof standaloneUploadRoute> = async (c) => {
+  const userId = getUserId(c);
+  const formData = await c.req.formData();
+  const file = formData.get('file');
+  const icrParam = formData.get('icr');
+  const lineId = formData.get('lineId')?.toString() ?? undefined;
+
+  if (!file || !(file instanceof File)) throw new ValidationError('File is required');
+
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const icr = parseIcrParam(icrParam?.toString());
+
+  const result = await uploadReceipt(userId, { lineId, file: fileBuffer, fileName: file.name, mimeType: file.type, icr });
+
+  if (icr && result.parsedData) return c.json({ receipt: result.receipt, parsedData: result.parsedData } as any, 201);
+  return c.json({ receipt: result.receipt } as any, 201);
+};
+receiptDirectRouter.openapi(standaloneUploadRoute, standaloneUploadHandler);
+
+// Standalone presigned upload URL: POST /receipts/upload-url
+const standaloneUploadUrlRoute = createRoute({
+  method: 'post',
+  path: '/upload-url',
+  tags: ['Receipts'],
+  summary: 'Request presigned upload URL (standalone)',
+  description: 'Get a presigned S3 URL for uploading a receipt without a report.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: { content: { 'application/json': { schema: RequestUploadUrlSchema } } },
+  },
+  responses: {
+    200: { description: 'Presigned upload URL', content: { 'application/json': { schema: UploadUrlResponseSchema } } },
+    400: { description: 'Validation error', content: { 'application/json': { schema: ErrorSchema } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const standaloneUploadUrlHandler: RouteHandler<typeof standaloneUploadUrlRoute> = async (c) => {
+  const userId = getUserId(c);
+  const body = c.req.valid('json');
+  const result = await requestUploadUrl(userId, { lineId: body.lineId, fileName: body.fileName, mimeType: body.mimeType, fileSize: body.fileSize });
+  return c.json({ uploadUrl: result.uploadUrl, key: result.key, expiresAt: result.expiresAt.toISOString() } as any, 200);
+};
+receiptDirectRouter.openapi(standaloneUploadUrlRoute, standaloneUploadUrlHandler);
+
+// Standalone confirm upload: POST /receipts/confirm-upload
+const standaloneConfirmUploadRoute = createRoute({
+  method: 'post',
+  path: '/confirm-upload',
+  tags: ['Receipts'],
+  summary: 'Confirm presigned upload (standalone)',
+  description: 'Confirm an S3 upload and create the receipt record without a report.',
+  security,
+  request: {
+    headers: AuthHeaderSchema,
+    body: { content: { 'application/json': { schema: ConfirmUploadSchema } } },
+  },
+  responses: {
+    201: { description: 'Receipt created', content: { 'application/json': { schema: ReceiptUploadResponseSchema } } },
+    400: { description: 'Validation error', content: { 'application/json': { schema: ErrorSchema } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Duplicate receipt', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const standaloneConfirmUploadHandler: RouteHandler<typeof standaloneConfirmUploadRoute> = async (c) => {
+  const userId = getUserId(c);
+  const body = c.req.valid('json');
+  const result = await confirmUpload(userId, { lineId: body.lineId, key: body.key, fileName: body.fileName, mimeType: body.mimeType, fileSize: body.fileSize, fileHash: body.fileHash, icr: body.icr });
+  if (body.icr && result.parsedData) return c.json({ receipt: result.receipt, parsedData: result.parsedData } as any, 201);
+  return c.json({ receipt: result.receipt } as any, 201);
+};
+receiptDirectRouter.openapi(standaloneConfirmUploadRoute, standaloneConfirmUploadHandler);
 
 // Download receipt file
 const downloadRoute = createRoute({
@@ -249,7 +358,7 @@ const downloadRoute = createRoute({
   },
 });
 
-const downloadHandler = async (c) => {
+const downloadHandler: RouteHandler<typeof downloadRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -295,7 +404,7 @@ const deleteReceiptRoute = createRoute({
   },
 });
 
-const deleteReceiptHandler = async (c) => {
+const deleteReceiptHandler: RouteHandler<typeof deleteReceiptRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -333,13 +442,13 @@ const getAssociationsRoute = createRoute({
   },
 });
 
-const getAssociationsHandler = async (c) => {
+const getAssociationsHandler: RouteHandler<typeof getAssociationsRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const lines = await getReceiptAssociations(id, userId);
 
-  return c.json({ lines }, 200);
+  return c.json({ lines } as any, 200);
 };
 receiptDirectRouter.openapi(getAssociationsRoute, getAssociationsHandler);
 
@@ -378,7 +487,7 @@ const associateRoute = createRoute({
   },
 });
 
-const associateHandler = async (c) => {
+const associateHandler: RouteHandler<typeof associateRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
   const { lineIds } = c.req.valid('json');
@@ -422,7 +531,7 @@ const removeAssociationRoute = createRoute({
   },
 });
 
-const removeAssociationHandler = async (c) => {
+const removeAssociationHandler: RouteHandler<typeof removeAssociationRoute> = async (c) => {
   const userId = getUserId(c);
   const { id, lineId } = c.req.valid('param');
 
@@ -470,13 +579,14 @@ const requestUploadUrlRoute = createRoute({
   },
 });
 
-const requestUploadUrlHandler = async (c) => {
+const requestUploadUrlHandler: RouteHandler<typeof requestUploadUrlRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string;
+  const reportId = c.req.param('reportId') as string | undefined;
   const body = c.req.valid('json');
 
   const result = await requestUploadUrl(userId, {
-    reportId,
+    reportId: reportId || undefined,
+    lineId: body.lineId,
     fileName: body.fileName,
     mimeType: body.mimeType,
     fileSize: body.fileSize,
@@ -486,7 +596,7 @@ const requestUploadUrlHandler = async (c) => {
     uploadUrl: result.uploadUrl,
     key: result.key,
     expiresAt: result.expiresAt.toISOString(),
-  }, 200);
+  } as any, 200);
 };
 receiptsRouter.openapi(requestUploadUrlRoute, requestUploadUrlHandler);
 
@@ -532,13 +642,14 @@ const confirmUploadRoute = createRoute({
   },
 });
 
-const confirmUploadHandler = async (c) => {
+const confirmUploadHandler: RouteHandler<typeof confirmUploadRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string;
+  const reportId = c.req.param('reportId') as string | undefined;
   const body = c.req.valid('json');
 
   const result = await confirmUpload(userId, {
-    reportId,
+    reportId: reportId || undefined,
+    lineId: body.lineId,
     key: body.key,
     fileName: body.fileName,
     mimeType: body.mimeType,
@@ -551,10 +662,10 @@ const confirmUploadHandler = async (c) => {
     return c.json({
       receipt: result.receipt,
       parsedData: result.parsedData,
-    }, 201);
+    } as any, 201);
   }
 
-  return c.json({ receipt: result.receipt }, 201);
+  return c.json({ receipt: result.receipt } as any, 201);
 };
 receiptsRouter.openapi(confirmUploadRoute, confirmUploadHandler);
 
@@ -594,7 +705,7 @@ const getDownloadUrlRoute = createRoute({
   },
 });
 
-const getDownloadUrlHandler = async (c) => {
+const getDownloadUrlHandler: RouteHandler<typeof getDownloadUrlRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
@@ -605,7 +716,7 @@ const getDownloadUrlHandler = async (c) => {
     fileName: result.fileName,
     mimeType: result.mimeType,
     expiresAt: result.expiresAt.toISOString(),
-  }, 200);
+  } as any, 200);
 };
 receiptDirectRouter.openapi(getDownloadUrlRoute, getDownloadUrlHandler);
 
@@ -653,17 +764,17 @@ const reparseReceiptRoute = createRoute({
   },
 });
 
-const reparseReceiptHandler = async (c) => {
+const reparseReceiptHandler: RouteHandler<typeof reparseReceiptRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
 
   const result = await reparseReceiptById(id, userId);
 
   if (!result.success && result.error) {
-    return c.json(result, 200);
+    return c.json(result as any, 200);
   }
 
-  return c.json(result, 200);
+  return c.json(result as any, 200);
 };
 receiptDirectRouter.openapi(reparseReceiptRoute, reparseReceiptHandler);
 

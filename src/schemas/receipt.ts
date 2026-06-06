@@ -4,7 +4,8 @@ import { ExpenseLineSchema } from './expenseLine.js';
 
 export const ReceiptSchema = z.object({
   id: z.string().uuid(),
-  reportId: z.string().uuid(),
+  reportId: z.string().uuid().nullable(),
+  userId: z.string().uuid().nullable(),
   filePath: z.string(),
   fileName: z.string(),
   fileHash: z.string(),
@@ -61,6 +62,7 @@ export const RequestUploadUrlSchema = z.object({
   fileName: z.string().min(1).max(255).openapi({ example: 'receipt.pdf', description: 'Original file name' }),
   mimeType: z.string().openapi({ example: 'application/pdf', description: 'MIME type of the file' }),
   fileSize: z.number().int().positive().openapi({ example: 1024000, description: 'File size in bytes' }),
+  lineId: z.string().uuid().optional().openapi({ description: 'Expense line to associate after upload' }),
 }).openapi('RequestUploadUrl');
 
 export const UploadUrlResponseSchema = z.object({
@@ -76,6 +78,7 @@ export const ConfirmUploadSchema = z.object({
   fileSize: z.number().int().positive().openapi({ example: 1024000, description: 'File size in bytes' }),
   fileHash: z.string().length(64).openapi({ description: 'SHA-256 hash of the file for deduplication' }),
   icr: z.boolean().optional().openapi({ description: 'Enable receipt parsing (ICR)' }),
+  lineId: z.string().uuid().optional().openapi({ description: 'Expense line to associate after upload' }),
 }).openapi('ConfirmUpload');
 
 export const DownloadUrlResponseSchema = z.object({

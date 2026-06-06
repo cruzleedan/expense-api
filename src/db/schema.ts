@@ -400,8 +400,9 @@ export const expenseLines = pgTable('expense_lines', {
 export const receipts = pgTable('receipts', {
   id: uuid().primaryKey().defaultRandom(),
   reportId: uuid()
-    .notNull()
-    .references(() => expenseReports.id, { onDelete: 'cascade' }),
+    .references(() => expenseReports.id, { onDelete: 'set null' }),
+  userId: uuid()
+    .references(() => users.id, { onDelete: 'cascade' }),
   filePath: varchar({ length: 500 }).notNull(),
   fileName: varchar({ length: 255 }).notNull(),
   fileHash: varchar({ length: 64 }).notNull().unique(),
