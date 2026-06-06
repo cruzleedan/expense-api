@@ -3,7 +3,6 @@ import { expenseLines, expenseReports, receipts, receiptLineAssociations } from 
 import type { ExpenseLine } from '../db/schema.js';
 import { NotFoundError, ForbiddenError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
-import { propagateReceiptReportId } from './receipt.service.js';
 import { logger } from '../utils/logger.js';
 import {
   eq, and, or, ilike, asc, desc, count, gt, isNull, sql, type SQL,
@@ -351,8 +350,6 @@ export async function attachLinesToReport(
       sql`id = ANY(ARRAY[${sql.join(lineIds.map((id) => sql`${id}::uuid`), sql`, `)}])`
     );
 
-  // Backfill report_id on any orphaned receipts linked to these lines
-  await propagateReceiptReportId(reportId, lineIds);
 }
 
 export async function listExpenseLinesForSync(
@@ -482,7 +479,7 @@ export async function bulkCreateExpenseLines(
         if (line.receiptId) {
           try {
             const [receipt] = await tx
-              .select({ reportId: receipts.reportId })
+              .select({ userId: receipts.userId })
               .from(receipts)
               .where(eq(receipts.id, line.receiptId))
               .limit(1);
@@ -491,8 +488,8 @@ export async function bulkCreateExpenseLines(
               failed.push({ index: i, error: `Receipt ${line.receiptId} not found` });
               continue;
             }
-            if (receipt.reportId !== reportId) {
-              failed.push({ index: i, error: 'Receipt must belong to the same report' });
+            if (receipt.userId !== userId) {
+              failed.push({ index: i, error: 'Access denied to this receipt' });
               continue;
             }
 

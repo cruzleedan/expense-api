@@ -399,8 +399,6 @@ export const expenseLines = pgTable('expense_lines', {
 
 export const receipts = pgTable('receipts', {
   id: uuid().primaryKey().defaultRandom(),
-  reportId: uuid()
-    .references(() => expenseReports.id, { onDelete: 'set null' }),
   userId: uuid()
     .references(() => users.id, { onDelete: 'cascade' }),
   filePath: varchar({ length: 500 }).notNull(),

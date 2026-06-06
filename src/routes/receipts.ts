@@ -144,8 +144,6 @@ const uploadRoute = createRoute({
 
 const uploadHandler: RouteHandler<typeof uploadRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string | undefined;
-
   const formData = await c.req.formData();
   const file = formData.get('file');
   const icrParam = formData.get('icr');
@@ -158,14 +156,7 @@ const uploadHandler: RouteHandler<typeof uploadRoute> = async (c) => {
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const icr = parseIcrParam(icrParam?.toString());
 
-  const result = await uploadReceipt(userId, {
-    reportId: reportId || undefined,
-    lineId,
-    file: fileBuffer,
-    fileName: file.name,
-    mimeType: file.type,
-    icr,
-  });
+  const result = await uploadReceipt(userId, { lineId, file: fileBuffer, fileName: file.name, mimeType: file.type, icr });
 
   if (icr && result.parsedData) {
     return c.json({
@@ -293,6 +284,7 @@ const standaloneUploadUrlHandler: RouteHandler<typeof standaloneUploadUrlRoute> 
   const userId = getUserId(c);
   const body = c.req.valid('json');
   const result = await requestUploadUrl(userId, { lineId: body.lineId, fileName: body.fileName, mimeType: body.mimeType, fileSize: body.fileSize });
+
   return c.json({ uploadUrl: result.uploadUrl, key: result.key, expiresAt: result.expiresAt.toISOString() } as any, 200);
 };
 receiptDirectRouter.openapi(standaloneUploadUrlRoute, standaloneUploadUrlHandler);
@@ -581,16 +573,9 @@ const requestUploadUrlRoute = createRoute({
 
 const requestUploadUrlHandler: RouteHandler<typeof requestUploadUrlRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string | undefined;
   const body = c.req.valid('json');
 
-  const result = await requestUploadUrl(userId, {
-    reportId: reportId || undefined,
-    lineId: body.lineId,
-    fileName: body.fileName,
-    mimeType: body.mimeType,
-    fileSize: body.fileSize,
-  });
+  const result = await requestUploadUrl(userId, { lineId: body.lineId, fileName: body.fileName, mimeType: body.mimeType, fileSize: body.fileSize });
 
   return c.json({
     uploadUrl: result.uploadUrl,
@@ -644,19 +629,9 @@ const confirmUploadRoute = createRoute({
 
 const confirmUploadHandler: RouteHandler<typeof confirmUploadRoute> = async (c) => {
   const userId = getUserId(c);
-  const reportId = c.req.param('reportId') as string | undefined;
   const body = c.req.valid('json');
 
-  const result = await confirmUpload(userId, {
-    reportId: reportId || undefined,
-    lineId: body.lineId,
-    key: body.key,
-    fileName: body.fileName,
-    mimeType: body.mimeType,
-    fileSize: body.fileSize,
-    fileHash: body.fileHash,
-    icr: body.icr,
-  });
+  const result = await confirmUpload(userId, { lineId: body.lineId, key: body.key, fileName: body.fileName, mimeType: body.mimeType, fileSize: body.fileSize, fileHash: body.fileHash, icr: body.icr });
 
   if (body.icr && result.parsedData) {
     return c.json({

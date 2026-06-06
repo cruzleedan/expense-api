@@ -393,7 +393,6 @@ CREATE TABLE IF NOT EXISTS expense_lines (
 -- Receipts (v4.0 with OCR and semantic search)
 CREATE TABLE IF NOT EXISTS receipts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    report_id UUID REFERENCES expense_reports(id) ON DELETE SET NULL,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     file_path VARCHAR(500) NOT NULL,
     file_name VARCHAR(255) NOT NULL,
@@ -883,7 +882,7 @@ CREATE INDEX IF NOT EXISTS idx_expense_lines_deleted_at ON expense_lines(deleted
 CREATE INDEX IF NOT EXISTS idx_expense_lines_updated_at ON expense_lines(updated_at DESC);
 
 -- Receipt indexes
-CREATE INDEX IF NOT EXISTS idx_receipts_report_id ON receipts(report_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_user_id ON receipts(user_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash);
 
 -- Approval history indexes

@@ -1,7 +1,7 @@
 import { query, transaction } from '../db/client.js';
 import type { Receipt, ExpenseLine } from '../types/index.js';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../types/index.js';
-import { verifyReportOwnership } from './expenseReport.service.js';
+import { verifyReportOwnership } from './expenseReport.service.js'; // kept for listReceipts ownership check
 import { sha256 } from '../utils/hash.js';
 import { getStorage } from '../storage/localStorage.js';
 import type { PresignedDownloadUrl } from '../storage/storage.interface.js';
@@ -26,12 +26,11 @@ const ALLOWED_MIME_TYPES = [
 ];
 
 export interface UploadReceiptInput {
-  reportId?: string;
   lineId?: string;
   file: Buffer;
   fileName: string;
   mimeType: string;
-  icr?: boolean; // Intelligent Character Recognition
+  icr?: boolean;
 }
 
 import type { ParsedReceiptData } from '../types/index.js';
@@ -45,23 +44,13 @@ export async function uploadReceipt(
   userId: string,
   input: UploadReceiptInput
 ): Promise<UploadReceiptResult> {
-  // If a reportId is given, verify ownership
-  if (input.reportId) {
-    await verifyReportOwnership(input.reportId, userId);
-  }
-
-  // If a lineId is given, verify it belongs to the user
   if (input.lineId) {
-    const lineResult = await query<{ user_id: string; report_id: string | null }>(
-      'SELECT user_id, report_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
+    const lineResult = await query<{ user_id: string }>(
+      'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
       [input.lineId]
     );
     if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
     if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
-    // Inherit reportId from the line if not explicitly provided
-    if (!input.reportId && lineResult.rows[0].report_id) {
-      input.reportId = lineResult.rows[0].report_id;
-    }
   }
 
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
@@ -74,22 +63,17 @@ export async function uploadReceipt(
 
   const fileHash = sha256(input.file);
 
-  const existingResult = await query<{ id: string }>(
-    'SELECT id FROM receipts WHERE file_hash = $1',
-    [fileHash]
-  );
-  if (existingResult.rows.length > 0) {
-    throw new ConflictError('Duplicate receipt: this file has already been uploaded');
-  }
+  const existingResult = await query<{ id: string }>('SELECT id FROM receipts WHERE file_hash = $1', [fileHash]);
+  if (existingResult.rows.length > 0) throw new ConflictError('Duplicate receipt: this file has already been uploaded');
 
   const storage = getStorage();
   const filePath = await storage.save(input.file, input.fileName);
 
   const result = await query<Receipt>(
-    `INSERT INTO receipts (report_id, user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO receipts (user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [input.reportId ?? null, userId, filePath, input.fileName, fileHash, input.mimeType, input.file.length, null]
+    [userId, filePath, input.fileName, fileHash, input.mimeType, input.file.length, null]
   );
 
   const receipt = result.rows[0];
@@ -97,8 +81,7 @@ export async function uploadReceipt(
 
   if (input.lineId) {
     await query(
-      `INSERT INTO receipt_line_associations (receipt_id, line_id)
-       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      `INSERT INTO receipt_line_associations (receipt_id, line_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
       [receipt.id, input.lineId]
     );
   }
@@ -112,7 +95,7 @@ export async function uploadReceipt(
     }
   }
 
-  logger.info('Receipt uploaded', { receiptId: receipt.id, reportId: input.reportId ?? null, lineId: input.lineId ?? null, icr: input.icr, parsed: !!parsedData });
+  logger.info('Receipt uploaded', { receiptId: receipt.id, lineId: input.lineId ?? null, icr: input.icr, parsed: !!parsedData });
 
   return { receipt, parsedData };
 }
@@ -144,44 +127,37 @@ export async function listReceipts(
   userId: string,
   params: PaginationParams
 ): Promise<{ receipts: Receipt[]; total: number }> {
-  // Verify user owns the report
   await verifyReportOwnership(reportId, userId);
 
   const offset = getOffset(params);
-  const conditions = ['report_id = $1'];
   const values: unknown[] = [reportId];
   let paramIndex = 2;
 
-  // Add search condition if provided
-  const searchCondition = buildSearchCondition(
-    params.search,
-    RECEIPT_SEARCHABLE_FIELDS,
-    paramIndex
-  );
+  let searchClause = '';
+  const searchCondition = buildSearchCondition(params.search, RECEIPT_SEARCHABLE_FIELDS, paramIndex);
   if (searchCondition) {
-    conditions.push(searchCondition.condition);
+    searchClause = `AND ${searchCondition.condition}`;
     values.push(searchCondition.value);
     paramIndex = searchCondition.nextParamIndex;
   }
 
-  const whereClause = conditions.join(' AND ');
+  const orderBy = buildOrderByClause(params, RECEIPT_SORTABLE_FIELDS, 'r.created_at DESC');
 
-  // Build ORDER BY clause with allowed fields, default to created_at DESC
-  const orderBy = buildOrderByClause(
-    params,
-    RECEIPT_SORTABLE_FIELDS,
-    'created_at DESC'
-  );
+  // Receipts for a report = receipts linked to any line belonging to that report
+  const baseFrom = `
+    FROM receipts r
+    JOIN receipt_line_associations rla ON rla.receipt_id = r.id
+    JOIN expense_lines el ON el.id = rla.line_id
+    WHERE el.report_id = $1 ${searchClause}
+  `;
 
   const [dataResult, countResult] = await Promise.all([
     query<Receipt>(
-      `SELECT * FROM receipts WHERE ${whereClause}
-       ORDER BY ${orderBy}
-       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      `SELECT DISTINCT r.* ${baseFrom} ORDER BY ${orderBy} LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...values, params.limit, offset]
     ),
     query<{ count: string }>(
-      `SELECT COUNT(*) as count FROM receipts WHERE ${whereClause}`,
+      `SELECT COUNT(DISTINCT r.id) as count ${baseFrom}`,
       values
     ),
   ]);
@@ -290,7 +266,6 @@ export async function getReceiptFile(
 }
 
 export interface RequestUploadUrlInput {
-  reportId?: string;
   lineId?: string;
   fileName: string;
   mimeType: string;
@@ -307,9 +282,6 @@ export async function requestUploadUrl(
   userId: string,
   input: RequestUploadUrlInput
 ): Promise<RequestUploadUrlResult> {
-  if (input.reportId) {
-    await verifyReportOwnership(input.reportId, userId);
-  }
   if (input.lineId) {
     const lineResult = await query<{ user_id: string }>(
       'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
@@ -319,7 +291,6 @@ export async function requestUploadUrl(
     if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
   }
 
-  // Validate file type
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
     throw new ValidationError(
       `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
@@ -343,10 +314,7 @@ export async function requestUploadUrl(
     contentType: input.mimeType,
   });
 
-  logger.info('Presigned upload URL generated', {
-    reportId: input.reportId,
-    key: presigned.key,
-  });
+  logger.info('Presigned upload URL generated', { lineId: input.lineId ?? null, key: presigned.key });
 
   return {
     uploadUrl: presigned.url,
@@ -356,7 +324,6 @@ export async function requestUploadUrl(
 }
 
 export interface ConfirmUploadInput {
-  reportId?: string;
   lineId?: string;
   key: string;
   fileName: string;
@@ -370,22 +337,15 @@ export async function confirmUpload(
   userId: string,
   input: ConfirmUploadInput
 ): Promise<UploadReceiptResult> {
-  if (input.reportId) {
-    await verifyReportOwnership(input.reportId, userId);
-  }
   if (input.lineId) {
-    const lineResult = await query<{ user_id: string; report_id: string | null }>(
-      'SELECT user_id, report_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
+    const lineResult = await query<{ user_id: string }>(
+      'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
       [input.lineId]
     );
     if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
     if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
-    if (!input.reportId && lineResult.rows[0].report_id) {
-      input.reportId = lineResult.rows[0].report_id;
-    }
   }
 
-  // Validate file type
   if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
     throw new ValidationError(
       `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
@@ -413,10 +373,10 @@ export async function confirmUpload(
   }
 
   const result = await query<Receipt>(
-    `INSERT INTO receipts (report_id, user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO receipts (user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [input.reportId ?? null, userId, input.key, input.fileName, input.fileHash, input.mimeType, input.fileSize, null]
+    [userId, input.key, input.fileName, input.fileHash, input.mimeType, input.fileSize, null]
   );
 
   const receipt = result.rows[0];
@@ -444,13 +404,7 @@ export async function confirmUpload(
     }
   }
 
-  logger.info('Receipt upload confirmed', {
-    receiptId: receipt.id,
-    reportId: input.reportId,
-    key: input.key,
-    icr: input.icr,
-    parsed: !!parsedData,
-  });
+  logger.info('Receipt upload confirmed', { receiptId: receipt.id, lineId: input.lineId ?? null, key: input.key, icr: input.icr, parsed: !!parsedData });
 
   return { receipt, parsedData };
 }
@@ -479,23 +433,6 @@ export async function getReceiptDownloadUrl(
     fileName: receipt.file_name,
     mimeType: receipt.mime_type,
   };
-}
-
-/**
- * When expense lines are attached to a report, backfill report_id on any
- * receipts linked to those lines that don't yet have a report.
- */
-export async function propagateReceiptReportId(reportId: string, lineIds: string[]): Promise<void> {
-  if (lineIds.length === 0) return;
-  await query(
-    `UPDATE receipts r
-     SET report_id = $1
-     FROM receipt_line_associations rla
-     WHERE rla.receipt_id = r.id
-       AND rla.line_id = ANY($2::uuid[])
-       AND r.report_id IS NULL`,
-    [reportId, lineIds]
-  );
 }
 
 /**
