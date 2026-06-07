@@ -24,7 +24,6 @@ import { analyticsRouter } from './routes/analytics.js';
 import { insightsRouter } from './routes/insights.js';
 import { anomaliesRouter } from './routes/anomalies.js';
 import { adminAnalyticsRouter } from './routes/adminAnalytics.js';
-import { expensesRouter } from './routes/expenses.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -66,7 +65,6 @@ app.use('/v1/analytics/*', rateLimit());
 app.use('/v1/insights/*', rateLimit());
 app.use('/v1/anomalies/*', rateLimit());
 app.use('/v1/admin/*', rateLimit());
-app.use('/v1/expenses/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -88,7 +86,6 @@ app.route('/v1/analytics', analyticsRouter);
 app.route('/v1/insights', insightsRouter);
 app.route('/v1/anomalies', anomaliesRouter);
 app.route('/v1/admin/analytics', adminAnalyticsRouter);
-app.route('/v1/expenses', expensesRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
