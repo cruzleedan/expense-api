@@ -11,6 +11,7 @@ import {
   deleteExpenseLine,
   bulkCreateExpenseLines,
   listExpenseLinesForSync,
+  listExpenseLineSyncManifest,
   type UpdateExpenseLineInput,
   type CreateExpenseLineInput,
 } from '../services/expenseLine.service.js';
@@ -25,7 +26,14 @@ import {
   BulkCreateExpenseLineResponseSchema,
   SyncExpenseLinesQuerySchema,
 } from '../schemas/expenseLine.js';
-import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
+import {
+  ErrorSchema,
+  MessageSchema,
+  UuidParamSchema,
+  AuthHeaderSchema,
+  SyncManifestQuerySchema,
+  SyncManifestResponseSchema,
+} from '../schemas/common.js';
 
 // Router for lines under reports: /expense-reports/:reportId/lines
 const expenseLinesRouter = new OpenAPIHono();
@@ -235,6 +243,42 @@ const createStandaloneLineHandler: RouteHandler<typeof createStandaloneLineRoute
 };
 expenseLineDirectRouter.openapi(createStandaloneLineRoute, createStandaloneLineHandler);
 
+// Sync manifest: lightweight list of all line IDs (active + tombstoned) across the user's reports
+// Registered before the /{id} route so the literal "sync-manifest" path isn't captured as a UUID param
+const syncManifestRoute = createRoute({
+  method: 'get',
+  path: '/sync-manifest',
+  tags: ['Expense Lines'],
+  summary: 'Sync manifest for expense lines',
+  description: 'Returns a lightweight paginated list of all expense line IDs (active and tombstoned) owned by the authenticated user across all reports, for full-resync reconciliation.',
+  security,
+  request: {
+    query: SyncManifestQuerySchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Expense line sync manifest',
+      content: { 'application/json': { schema: SyncManifestResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const syncManifestHandler: RouteHandler<typeof syncManifestRoute> = async (c) => {
+  const userId = getUserId(c);
+  const query = c.req.valid('query');
+  const params = { page: query.page, limit: query.limit, sortOrder: 'asc' as const };
+
+  const { items, total } = await listExpenseLineSyncManifest(userId, params);
+
+  return c.json(paginate(items, total, params), 200);
+};
+expenseLineDirectRouter.openapi(syncManifestRoute, syncManifestHandler);
+
 // Get expense line by ID (direct access)
 const getLineRoute = createRoute({
   method: 'get',
@@ -374,8 +418,8 @@ const syncLinesRoute = createRoute({
   method: 'get',
   path: '/',
   tags: ['Expense Lines'],
-  summary: 'Sync expense lines',
-  description: 'Returns paginated expense lines (including tombstones) for incremental sync. Use updatedSince for delta sync.',
+  summary: 'List or sync expense lines across all reports',
+  description: 'Returns paginated expense lines for the authenticated user across all reports. With `updatedSince`, returns lines updated since that timestamp including tombstones (sync mode). Without it, returns active lines with optional `assigned`/`search`/`sortBy` filtering (list mode).',
   security,
   request: {
     query: SyncExpenseLinesQuerySchema,
@@ -396,8 +440,18 @@ const syncLinesRoute = createRoute({
 const syncLinesHandler: RouteHandler<typeof syncLinesRoute> = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
-  const params = { page: query.page, limit: query.limit, sortOrder: 'asc' as const };
-  const { lines, total } = await listExpenseLinesForSync(userId, params, query.updatedSince);
+  const isSync = !!query.updatedSince;
+  const params = {
+    page: query.page,
+    limit: query.limit,
+    sortBy: query.sortBy,
+    sortOrder: isSync ? ('asc' as const) : query.sortOrder,
+  };
+  const { lines, total } = await listExpenseLinesForSync(userId, params, {
+    updatedSince: query.updatedSince,
+    assigned: query.assigned === undefined ? undefined : query.assigned === 'true',
+    search: query.search,
+  });
   return c.json(paginate(lines, total, params) as any, 200);
 };
 expenseLineDirectRouter.openapi(syncLinesRoute, syncLinesHandler);

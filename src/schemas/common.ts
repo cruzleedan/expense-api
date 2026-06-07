@@ -50,3 +50,19 @@ export const TimestampFields = {
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 };
+
+// Sync manifest — lightweight reconciliation payload (id + tombstone marker only)
+export const SyncManifestQuerySchema = z.object({
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(1000)).default('500').openapi({ example: '500' }),
+});
+
+export const SyncManifestItemSchema = z.object({
+  id: z.string().uuid(),
+  deletedAt: z.string().datetime().nullable(),
+});
+
+export const SyncManifestResponseSchema = z.object({
+  data: z.array(SyncManifestItemSchema),
+  pagination: PaginationMetaSchema,
+}).openapi('SyncManifest');

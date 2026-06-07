@@ -213,6 +213,26 @@ export async function listExpenseReports(
   return { reports, total };
 }
 
+export async function listExpenseReportSyncManifest(
+  userId: string,
+  params: PaginationParams
+): Promise<{ items: { id: string; deletedAt: string | null }[]; total: number }> {
+  const where = eq(expenseReports.userId, userId);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ id: expenseReports.id, deletedAt: expenseReports.deletedAt })
+      .from(expenseReports)
+      .where(where)
+      .orderBy(asc(expenseReports.id))
+      .limit(params.limit)
+      .offset(getOffset(params)),
+    db.select({ total: count() }).from(expenseReports).where(where),
+  ]);
+
+  return { items: rows, total };
+}
+
 export async function updateExpenseReport(
   reportId: string,
   userId: string,

@@ -58,7 +58,7 @@ export const CreateExpenseLineSchema = z.object({
   locationCity: z.string().max(100).optional().openapi({ example: 'New York' }),
   locationCountry: z.string().max(100).optional().openapi({ example: 'USA' }),
   paymentMethod: z.enum(['corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other']).optional().openapi({ example: 'corporate_card' }),
-  originalAmount: z.number().positive().optional().openapi({ example: 450.00 }),
+  originalAmount: z.number().min(0).optional().openapi({ example: 450.00 }),
   originalCurrency: z.string().length(3).optional().openapi({ example: 'EUR' }),
   isBusinessExpense: z.boolean().optional().openapi({ example: true }),
   isReimbursable: z.boolean().optional().openapi({ example: false }),
@@ -78,6 +78,9 @@ export const CreateExpenseLineSchema = z.object({
 }).openapi('CreateExpenseLine');
 
 export const UpdateExpenseLineSchema = z.object({
+  reportId: z.string().uuid().nullable().optional().openapi({
+    description: 'Associate this line with a report (must be owned by the authenticated user), or null to detach it',
+  }),
   description: z.string().min(1).max(255).optional(),
   amount: z.number().optional(),
   currency: z.string().length(3).optional(),
@@ -88,7 +91,7 @@ export const UpdateExpenseLineSchema = z.object({
   locationCity: z.string().max(100).nullable().optional(),
   locationCountry: z.string().max(100).nullable().optional(),
   paymentMethod: z.enum(['corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other']).nullable().optional(),
-  originalAmount: z.number().positive().nullable().optional(),
+  originalAmount: z.number().min(0).nullable().optional(),
   originalCurrency: z.string().length(3).nullable().optional(),
   isBusinessExpense: z.boolean().optional(),
   isReimbursable: z.boolean().optional(),
@@ -123,21 +126,32 @@ export const ExpenseLineListResponseSchema = z.object({
   pagination: PaginationMetaSchema,
 }).openapi('ExpenseLineList');
 
-// Query schema for mobile sync endpoint — returns all user's lines across reports
+// Query schema for the cross-report expense lines endpoint (GET /v1/expense-lines).
+// Supports two modes:
+//  - Sync mode (updatedSince provided): returns lines updated since the timestamp, including tombstones.
+//  - List mode (updatedSince omitted): returns active (non-deleted) lines, with optional
+//    assignment filter / search / sort for UI listing.
 export const SyncExpenseLinesQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(500)).default('200').openapi({ example: '200' }),
   updatedSince: z.string().datetime().optional().openapi({
     example: '2026-03-01T00:00:00.000Z',
-    description: 'ISO 8601 timestamp. Returns only lines updated after this time, including deleted tombstones.',
+    description: 'ISO 8601 timestamp. Returns only lines updated after this time, including deleted tombstones (sync mode).',
   }),
+  assigned: z.enum(['true', 'false']).optional().openapi({
+    example: 'false',
+    description: 'List mode only. Filter by report association: "true" for lines attached to a report, "false" for unassigned lines.',
+  }),
+  search: z.string().max(255).optional().openapi({ example: 'flight', description: 'List mode only. Search in description and category' }),
+  sortBy: ExpenseLineSortBySchema.optional().openapi({ example: 'expenseDate', description: 'List mode only. Field to sort by' }),
+  sortOrder: z.enum(['asc', 'desc']).default('desc').openapi({ example: 'desc', description: 'List mode only. Sort direction' }),
 });
 
 // Bulk create schemas
 export const BulkCreateExpenseLineItemSchema = z.object({
   description: z.string().min(1).max(200).openapi({ example: 'Office Supplies - Staples' }),
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/).openapi({ example: '2026-02-01' }),
-  amount: z.number().positive().openapi({ example: 45.67 }),
+  amount: z.number().min(0).openapi({ example: 45.67 }),
   currency: z.string().length(3).optional().openapi({ example: 'USD' }),
   categoryCode: z.string().max(100).nullable().optional().openapi({ example: 'OFFICE' }),
   receiptId: z.string().uuid().optional().openapi({
@@ -149,7 +163,7 @@ export const BulkCreateExpenseLineItemSchema = z.object({
   locationCity: z.string().max(100).optional().openapi({ example: 'San Francisco' }),
   locationCountry: z.string().max(100).optional().openapi({ example: 'USA' }),
   paymentMethod: z.enum(['corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other']).optional().openapi({ example: 'corporate_card' }),
-  originalAmount: z.number().positive().optional(),
+  originalAmount: z.number().min(0).optional(),
   originalCurrency: z.string().length(3).optional(),
   isBusinessExpense: z.boolean().optional(),
   isReimbursable: z.boolean().optional(),

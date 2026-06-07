@@ -5,7 +5,7 @@ import { NotFoundError, ForbiddenError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
 import { logger } from '../utils/logger.js';
 import {
-  eq, and, or, ilike, asc, desc, count, gt, isNull, sql, type SQL,
+  eq, and, or, ilike, asc, desc, count, gt, isNull, isNotNull, sql, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 
@@ -42,6 +42,7 @@ export interface CreateExpenseLineInput {
 }
 
 export interface UpdateExpenseLineInput {
+  reportId?: string | null;
   description?: string;
   amount?: number;
   currency?: string;
@@ -217,9 +218,18 @@ export async function updateExpenseLine(
   userId: string,
   input: UpdateExpenseLineInput
 ): Promise<ExpenseLine> {
-  await getExpenseLineById(lineId, userId);
+  const existing = await getExpenseLineById(lineId, userId);
 
   const updates: Partial<typeof expenseLines.$inferInsert> = {};
+  if (input.reportId !== undefined && input.reportId !== existing.reportId) {
+    if (existing.reportId !== null) {
+      throw new ForbiddenError('Expense line is already attached to a report');
+    }
+    if (input.reportId !== null) {
+      await verifyReportOwnership(input.reportId, userId);
+    }
+    updates.reportId = input.reportId;
+  }
   if (input.description !== undefined) updates.description = input.description;
   if (input.amount !== undefined) updates.amount = input.amount ?? 0;
   if (input.currency !== undefined) updates.currency = input.currency;
@@ -352,29 +362,87 @@ export async function attachLinesToReport(
 
 }
 
+export interface ListExpenseLinesForSyncOptions {
+  updatedSince?: string;
+  /** List mode only (ignored when updatedSince is set): filter by report association. */
+  assigned?: boolean;
+  /** List mode only: search in description and category. */
+  search?: string;
+}
+
 export async function listExpenseLinesForSync(
   userId: string,
   params: PaginationParams,
-  updatedSince?: string
+  options: ListExpenseLinesForSyncOptions = {}
 ): Promise<{ lines: ExpenseLine[]; total: number }> {
-  const conditions: (SQL | undefined)[] = [
-    eq(expenseLines.userId, userId),
-    updatedSince ? gt(expenseLines.updatedAt, updatedSince) : undefined,
-  ];
+  const { updatedSince, assigned, search } = options;
+  const isSync = !!updatedSince;
+
+  const conditions: (SQL | undefined)[] = [eq(expenseLines.userId, userId)];
+
+  if (isSync) {
+    conditions.push(gt(expenseLines.updatedAt, updatedSince!));
+  } else {
+    conditions.push(isNull(expenseLines.deletedAt));
+    if (assigned === true) conditions.push(isNotNull(expenseLines.reportId));
+    if (assigned === false) conditions.push(isNull(expenseLines.reportId));
+    if (search) {
+      conditions.push(
+        or(
+          ilike(expenseLines.description, `%${search}%`),
+          ilike(expenseLines.category, `%${search}%`)
+        )
+      );
+    }
+  }
+
   const where = and(...(conditions.filter(Boolean) as SQL[]));
+
+  const sortColMap = {
+    description: expenseLines.description,
+    amount: expenseLines.amount,
+    expenseDate: expenseLines.expenseDate,
+    category: expenseLines.category,
+    createdAt: expenseLines.createdAt,
+  };
+  const orderExpr = isSync
+    ? desc(expenseLines.updatedAt)
+    : params.sortBy && params.sortBy in sortColMap
+      ? (params.sortOrder === 'desc' ? desc : asc)(sortColMap[params.sortBy as keyof typeof sortColMap])
+      : desc(expenseLines.expenseDate);
 
   const [rows, [{ total }]] = await Promise.all([
     db
       .select()
       .from(expenseLines)
       .where(where)
-      .orderBy(desc(expenseLines.updatedAt))
+      .orderBy(orderExpr)
       .limit(params.limit)
       .offset(getOffset(params)),
     db.select({ total: count() }).from(expenseLines).where(where),
   ]);
 
   return { lines: rows, total };
+}
+
+export async function listExpenseLineSyncManifest(
+  userId: string,
+  params: PaginationParams
+): Promise<{ items: { id: string; deletedAt: string | null }[]; total: number }> {
+  const where = eq(expenseLines.userId, userId);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ id: expenseLines.id, deletedAt: expenseLines.deletedAt })
+      .from(expenseLines)
+      .where(where)
+      .orderBy(asc(expenseLines.id))
+      .limit(params.limit)
+      .offset(getOffset(params)),
+    db.select({ total: count() }).from(expenseLines).where(where),
+  ]);
+
+  return { items: rows, total };
 }
 
 export interface BulkCreateExpenseLineInput {

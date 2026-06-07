@@ -6,6 +6,7 @@ import {
   createExpenseReport,
   getExpenseReportById,
   listExpenseReports,
+  listExpenseReportSyncManifest,
   updateExpenseReport,
   deleteExpenseReport,
 } from '../services/expenseReport.service.js';
@@ -17,7 +18,14 @@ import {
   ExpenseReportListQuerySchema,
   ExpenseReportListResponseSchema,
 } from '../schemas/expenseReport.js';
-import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
+import {
+  ErrorSchema,
+  MessageSchema,
+  UuidParamSchema,
+  AuthHeaderSchema,
+  SyncManifestQuerySchema,
+  SyncManifestResponseSchema,
+} from '../schemas/common.js';
 import { attachLinesToReport } from '../services/expenseLine.service.js';
 
 const serializeReport = (r: unknown) => ExpenseReportSchema.parse(r);
@@ -122,6 +130,42 @@ const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   return c.json(serializeReport(report), 201);
 };
 expenseReportsRouter.openapi(createRoute_, createHandler);
+
+// Sync manifest: lightweight list of all report IDs (active + tombstoned) for reconciliation
+// Registered before the /{id} route so the literal "sync-manifest" path isn't captured as a UUID param
+const syncManifestRoute = createRoute({
+  method: 'get',
+  path: '/sync-manifest',
+  tags: ['Expense Reports'],
+  summary: 'Sync manifest for expense reports',
+  description: 'Returns a lightweight paginated list of all expense report IDs (active and tombstoned) owned by the authenticated user, for full-resync reconciliation.',
+  security,
+  request: {
+    query: SyncManifestQuerySchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'Expense report sync manifest',
+      content: { 'application/json': { schema: SyncManifestResponseSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const syncManifestHandler: RouteHandler<typeof syncManifestRoute> = async (c) => {
+  const userId = getUserId(c);
+  const query = c.req.valid('query');
+  const params = { page: query.page, limit: query.limit, sortOrder: 'asc' as const };
+
+  const { items, total } = await listExpenseReportSyncManifest(userId, params);
+
+  return c.json(paginate(items, total, params), 200);
+};
+expenseReportsRouter.openapi(syncManifestRoute, syncManifestHandler);
 
 // Get expense report by ID
 const getRoute = createRoute({
