@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
@@ -53,7 +54,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -72,7 +73,7 @@ const listHandler = async (c) => {
 
   const { policies, total } = await listExpensePolicies(paginationParams, filters);
 
-  return c.json(paginate(policies, total, paginationParams), 200);
+  return c.json(paginate(policies, total, paginationParams) as any, 200);
 };
 expensePoliciesRouter.openapi(listRoute, listHandler);
 
@@ -102,13 +103,13 @@ const checkRoute = createRoute({
   },
 });
 
-const checkHandler = async (c) => {
+const checkHandler: RouteHandler<typeof checkRoute> = async (c) => {
   const context = c.req.valid('json');
 
   const violations = await checkPoliciesForExpense(context);
   const hasHardBlock = violations.some(v => v.severity === 'hard_block');
 
-  return c.json({ violations, hasHardBlock }, 200);
+  return c.json({ violations, hasHardBlock } as any, 200);
 };
 expensePoliciesRouter.openapi(checkRoute, checkHandler);
 
@@ -147,13 +148,13 @@ const createRoute_ = createRoute({
   },
 });
 
-const createHandler = async (c) => {
+const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const userId = getUserId(c);
   const input = c.req.valid('json');
 
   const policy = await createExpensePolicy(input, userId);
 
-  return c.json(policy, 201);
+  return c.json(policy as any, 201);
 };
 expensePoliciesRouter.openapi(createRoute_, createHandler);
 
@@ -185,12 +186,12 @@ const getRoute = createRoute({
   },
 });
 
-const getHandler = async (c) => {
+const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const policy = await getExpensePolicyById(id);
 
-  return c.json(policy, 200);
+  return c.json(policy as any, 200);
 };
 expensePoliciesRouter.openapi(getRoute, getHandler);
 
@@ -234,13 +235,13 @@ const updateRoute = createRoute({
   },
 });
 
-const updateHandler = async (c) => {
+const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   const policy = await updateExpensePolicy(id, input);
 
-  return c.json(policy, 200);
+  return c.json(policy as any, 200);
 };
 expensePoliciesRouter.openapi(updateRoute, updateHandler);
 
@@ -273,7 +274,7 @@ const deleteRoute = createRoute({
   },
 });
 
-const deleteHandler = async (c) => {
+const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteExpensePolicy(id);

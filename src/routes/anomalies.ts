@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
-import { authMiddleware } from '../middleware/auth.js';
+import type { RouteHandler } from '@hono/zod-openapi';
+import { authMiddleware, getUserId } from '../middleware/auth.js';
 import {
   getAnomaliesForUser,
   reviewAnomaly,
@@ -46,11 +47,11 @@ const listAnomaliesRoute = createRoute({
   },
 });
 
-const listAnomaliesHandler = async (c) => {
-  const userId = c.get('userId');
+const listAnomaliesHandler: RouteHandler<typeof listAnomaliesRoute> = async (c) => {
+  const userId = getUserId(c);
   const { status, severity, limit, offset } = c.req.valid('query');
   const result = await getAnomaliesForUser(userId, { status, severity, limit, offset });
-  return c.json({ data: result.anomalies, total: result.total }, 200);
+  return c.json({ data: result.anomalies, total: result.total } as any, 200);
 };
 anomaliesRouter.openapi(listAnomaliesRoute, listAnomaliesHandler);
 
@@ -88,8 +89,8 @@ const reviewAnomalyRoute = createRoute({
   },
 });
 
-const reviewAnomalyHandler = async (c) => {
-  const userId = c.get('userId');
+const reviewAnomalyHandler: RouteHandler<typeof reviewAnomalyRoute> = async (c) => {
+  const userId = getUserId(c);
   const { anomalyId } = c.req.valid('param');
   const { notes } = c.req.valid('json');
   await reviewAnomaly(userId, anomalyId, notes);
@@ -128,8 +129,8 @@ const dismissAnomalyRoute = createRoute({
   },
 });
 
-const dismissAnomalyHandler = async (c) => {
-  const userId = c.get('userId');
+const dismissAnomalyHandler: RouteHandler<typeof dismissAnomalyRoute> = async (c) => {
+  const userId = getUserId(c);
   const { anomalyId } = c.req.valid('param');
   await dismissAnomaly(userId, anomalyId);
   return c.json({ message: 'Anomaly dismissed' }, 200);

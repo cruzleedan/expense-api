@@ -18,8 +18,8 @@ export interface UserRole {
   id: string;
   name: string;
   description: string | null;
-  isSystem: boolean;
-  assignedAt: Date;
+  is_system: boolean;
+  assigned_at: Date;
 }
 
 export interface CreateUserInput {

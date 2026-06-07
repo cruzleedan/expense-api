@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
@@ -8,6 +9,7 @@ import {
   updateProject,
   deleteProject,
   getProjectBudgetSummary,
+  type UpdateProjectInput,
 } from '../services/project.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
@@ -52,7 +54,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -72,7 +74,7 @@ const listHandler = async (c) => {
 
   const { projects, total } = await listProjects(paginationParams, filters);
 
-  return c.json(paginate(projects, total, paginationParams), 200);
+  return c.json(paginate(projects, total, paginationParams) as any, 200);
 };
 projectsRouter.openapi(listRoute, listHandler);
 
@@ -111,12 +113,12 @@ const createRoute_ = createRoute({
   },
 });
 
-const createHandler = async (c) => {
+const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const input = c.req.valid('json');
 
   const project = await createProject(input);
 
-  return c.json(project, 201);
+  return c.json(project as any, 201);
 };
 projectsRouter.openapi(createRoute_, createHandler);
 
@@ -148,12 +150,12 @@ const getRoute = createRoute({
   },
 });
 
-const getHandler = async (c) => {
+const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const project = await getProjectById(id);
 
-  return c.json(project, 200);
+  return c.json(project as any, 200);
 };
 projectsRouter.openapi(getRoute, getHandler);
 
@@ -185,12 +187,12 @@ const budgetSummaryRoute = createRoute({
   },
 });
 
-const budgetSummaryHandler = async (c) => {
+const budgetSummaryHandler: RouteHandler<typeof budgetSummaryRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const summary = await getProjectBudgetSummary(id);
 
-  return c.json(summary, 200);
+  return c.json(summary as any, 200);
 };
 projectsRouter.openapi(budgetSummaryRoute, budgetSummaryHandler);
 
@@ -234,13 +236,13 @@ const updateRoute = createRoute({
   },
 });
 
-const updateHandler = async (c) => {
+const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
-  const project = await updateProject(id, input);
+  const project = await updateProject(id, input as UpdateProjectInput);
 
-  return c.json(project, 200);
+  return c.json(project as any, 200);
 };
 projectsRouter.openapi(updateRoute, updateHandler);
 
@@ -277,7 +279,7 @@ const deleteRoute = createRoute({
   },
 });
 
-const deleteHandler = async (c) => {
+const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteProject(id);

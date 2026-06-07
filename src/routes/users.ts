@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import {
   createUser,
@@ -71,7 +72,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -92,7 +93,7 @@ const listHandler = async (c) => {
     roles: formatUserRoles(u.roles),
   }));
 
-  return c.json(paginate(formattedUsers, total, paginationParams), 200);
+  return c.json(paginate(formattedUsers, total, paginationParams) as any, 200);
 };
 usersRouter.openapi(listRoute, listHandler);
 
@@ -130,13 +131,13 @@ const createRoute_ = createRoute({
   },
 });
 
-const createHandler = async (c) => {
+const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const input = c.req.valid('json');
 
   const user = await createUser(input);
   const roles = await getUserRolesById(user.id);
 
-  return c.json({ ...user, roles: formatUserRoles(roles) }, 201);
+  return c.json({ ...user, roles: formatUserRoles(roles) } as any, 201);
 };
 usersRouter.openapi(createRoute_, createHandler);
 
@@ -168,12 +169,12 @@ const getRoute = createRoute({
   },
 });
 
-const getHandler = async (c) => {
+const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const user = await getUserWithRoles(id);
 
-  return c.json({ ...user, roles: formatUserRoles(user.roles) }, 200);
+  return c.json({ ...user, roles: formatUserRoles(user.roles) } as any, 200);
 };
 usersRouter.openapi(getRoute, getHandler);
 
@@ -216,14 +217,14 @@ const updateRoute = createRoute({
   },
 });
 
-const updateHandler = async (c) => {
+const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   const user = await updateUser(id, input);
   const roles = await getUserRolesById(id);
 
-  return c.json({ ...user, roles: formatUserRoles(roles) }, 200);
+  return c.json({ ...user, roles: formatUserRoles(roles) } as any, 200);
 };
 usersRouter.openapi(updateRoute, updateHandler);
 
@@ -259,7 +260,7 @@ const deleteRoute = createRoute({
   },
 });
 
-const deleteHandler = async (c) => {
+const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteUser(id);
@@ -300,12 +301,12 @@ const getUserRolesRoute = createRoute({
   },
 });
 
-const getUserRolesHandler = async (c) => {
+const getUserRolesHandler: RouteHandler<typeof getUserRolesRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const roles = await getUserRolesById(id);
 
-  return c.json({ roles: formatUserRoles(roles) }, 200);
+  return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
 usersRouter.openapi(getUserRolesRoute, getUserRolesHandler);
 
@@ -344,14 +345,14 @@ const setUserRolesRoute = createRoute({
   },
 });
 
-const setUserRolesHandler = async (c) => {
+const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
   const assignedBy = getUserId(c);
 
   const roles = await setUserRolesById(id, roleIds, assignedBy);
 
-  return c.json({ roles: formatUserRoles(roles) }, 200);
+  return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
 usersRouter.openapi(setUserRolesRoute, setUserRolesHandler);
 
@@ -394,14 +395,14 @@ const addUserRoleRoute = createRoute({
   },
 });
 
-const addUserRoleHandler = async (c) => {
+const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
   const assignedBy = getUserId(c);
 
   const roles = await addUserRole(id, roleId, assignedBy);
 
-  return c.json({ roles: formatUserRoles(roles) }, 200);
+  return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
 usersRouter.openapi(addUserRoleRoute, addUserRoleHandler);
 
@@ -433,12 +434,12 @@ const removeUserRoleRoute = createRoute({
   },
 });
 
-const removeUserRoleHandler = async (c) => {
+const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { id, roleId } = c.req.valid('param');
 
   const roles = await removeUserRole(id, roleId);
 
-  return c.json({ roles: formatUserRoles(roles) }, 200);
+  return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
 usersRouter.openapi(removeUserRoleRoute, removeUserRoleHandler);
 

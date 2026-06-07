@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
@@ -54,7 +55,7 @@ const listRoute = createRoute({
   },
 });
 
-const listHandler = async (c) => {
+const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const query = c.req.valid('query');
 
   const paginationParams = {
@@ -72,7 +73,7 @@ const listHandler = async (c) => {
 
   const { templates, total } = await listLlmPromptTemplates(paginationParams, filters);
 
-  return c.json(paginate(templates, total, paginationParams), 200);
+  return c.json(paginate(templates, total, paginationParams) as any, 200);
 };
 llmPromptTemplatesRouter.openapi(listRoute, listHandler);
 
@@ -111,12 +112,12 @@ const createRoute_ = createRoute({
   },
 });
 
-const createHandler = async (c) => {
+const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const input = c.req.valid('json');
 
   const template = await createLlmPromptTemplate(input);
 
-  return c.json(template, 201);
+  return c.json(template as any, 201);
 };
 llmPromptTemplatesRouter.openapi(createRoute_, createHandler);
 
@@ -148,12 +149,12 @@ const getRoute = createRoute({
   },
 });
 
-const getHandler = async (c) => {
+const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   const template = await getLlmPromptTemplateById(id);
 
-  return c.json(template, 200);
+  return c.json(template as any, 200);
 };
 llmPromptTemplatesRouter.openapi(getRoute, getHandler);
 
@@ -189,12 +190,12 @@ const getByNameRoute = createRoute({
   },
 });
 
-const getByNameHandler = async (c) => {
+const getByNameHandler: RouteHandler<typeof getByNameRoute> = async (c) => {
   const { name } = c.req.valid('param');
 
   const template = await getLlmPromptTemplateByName(name);
 
-  return c.json(template, 200);
+  return c.json(template as any, 200);
 };
 llmPromptTemplatesRouter.openapi(getByNameRoute, getByNameHandler);
 
@@ -229,14 +230,14 @@ const renderRoute = createRoute({
   },
 });
 
-const renderHandler = async (c) => {
+const renderHandler: RouteHandler<typeof renderRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { context } = c.req.valid('json');
 
   const template = await getLlmPromptTemplateById(id);
   const rendered = renderTemplate(template, context);
 
-  return c.json({ template, rendered }, 200);
+  return c.json({ template, rendered } as any, 200);
 };
 llmPromptTemplatesRouter.openapi(renderRoute, renderHandler);
 
@@ -280,13 +281,13 @@ const updateRoute = createRoute({
   },
 });
 
-const updateHandler = async (c) => {
+const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
 
   const template = await updateLlmPromptTemplate(id, input);
 
-  return c.json(template, 200);
+  return c.json(template as any, 200);
 };
 llmPromptTemplatesRouter.openapi(updateRoute, updateHandler);
 
@@ -319,7 +320,7 @@ const deleteRoute = createRoute({
   },
 });
 
-const deleteHandler = async (c) => {
+const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const { id } = c.req.valid('param');
 
   await deleteLlmPromptTemplate(id);

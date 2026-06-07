@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
-import { authMiddleware } from '../middleware/auth.js';
+import type { RouteHandler } from '@hono/zod-openapi';
+import { authMiddleware, getUserId } from '../middleware/auth.js';
 import {
   getInsightsForUser,
   getUnreadInsightCount,
@@ -47,11 +48,11 @@ const listInsightsRoute = createRoute({
   },
 });
 
-const listInsightsHandler = async (c) => {
-  const userId = c.get('userId');
+const listInsightsHandler: RouteHandler<typeof listInsightsRoute> = async (c) => {
+  const userId = getUserId(c);
   const { type, limit, offset, includeStale } = c.req.valid('query');
   const result = await getInsightsForUser(userId, { type, limit, offset, includeStale });
-  return c.json({ data: result.insights, total: result.total }, 200);
+  return c.json({ data: result.insights, total: result.total } as any, 200);
 };
 insightsRouter.openapi(listInsightsRoute, listInsightsHandler);
 
@@ -81,10 +82,10 @@ const unreadCountRoute = createRoute({
   },
 });
 
-const unreadCountHandler = async (c) => {
-  const userId = c.get('userId');
+const unreadCountHandler: RouteHandler<typeof unreadCountRoute> = async (c) => {
+  const userId = getUserId(c);
   const count = await getUnreadInsightCount(userId);
-  return c.json({ count }, 200);
+  return c.json({ count } as any, 200);
 };
 insightsRouter.openapi(unreadCountRoute, unreadCountHandler);
 
@@ -119,8 +120,8 @@ const pinInsightRoute = createRoute({
   },
 });
 
-const pinInsightHandler = async (c) => {
-  const userId = c.get('userId');
+const pinInsightHandler: RouteHandler<typeof pinInsightRoute> = async (c) => {
+  const userId = getUserId(c);
   const { insightId } = c.req.valid('param');
   await pinInsight(userId, insightId);
   return c.json({ message: 'Insight pinned' }, 200);
@@ -158,8 +159,8 @@ const dismissInsightRoute = createRoute({
   },
 });
 
-const dismissInsightHandler = async (c) => {
-  const userId = c.get('userId');
+const dismissInsightHandler: RouteHandler<typeof dismissInsightRoute> = async (c) => {
+  const userId = getUserId(c);
   const { insightId } = c.req.valid('param');
   await dismissInsight(userId, insightId);
   return c.json({ message: 'Insight dismissed' }, 200);

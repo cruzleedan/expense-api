@@ -1,4 +1,5 @@
-import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import { requirePermission, getAuthUser } from '../middleware/permission.js';
 import {
@@ -128,12 +129,12 @@ const listWorkflowsRoute = createRoute({
   },
 });
 
-const listWorkflowsHandler = async (c) => {
+const listWorkflowsHandler: RouteHandler<typeof listWorkflowsRoute> = async (c) => {
   const workflows = await getAllWorkflows();
   return c.json({
     workflows: workflows.map(mapWorkflow),
     total: workflows.length,
-  }, 200);
+  } as any, 200);
 };
 workflowRouter.openapi(listWorkflowsRoute, listWorkflowsHandler);
 
@@ -161,7 +162,7 @@ const getWorkflowRoute = createRoute({
   },
 });
 
-const getWorkflowHandler = async (c) => {
+const getWorkflowHandler: RouteHandler<typeof getWorkflowRoute> = async (c) => {
   const { workflowId } = c.req.valid('param');
   const workflow = await getWorkflowById(workflowId);
 
@@ -169,7 +170,7 @@ const getWorkflowHandler = async (c) => {
     throw new NotFoundError('Workflow');
   }
 
-  return c.json(mapWorkflow(workflow), 200);
+  return c.json(mapWorkflow(workflow) as any, 200);
 };
 workflowRouter.openapi(getWorkflowRoute, getWorkflowHandler);
 
@@ -199,12 +200,12 @@ const createWorkflowRoute = createRoute({
   },
 });
 
-const createWorkflowHandler = async (c) => {
-  const body = c.req.valid('json');
+const createWorkflowHandler: RouteHandler<typeof createWorkflowRoute> = async (c) => {
+  const body = c.req.valid('json') as z.infer<typeof CreateWorkflowRequestSchema>;
   const userId = getUserId(c);
 
   // Map camelCase steps from request to snake_case WorkflowStep for service
-  const steps: WorkflowStep[] = body.steps.map(s => ({
+  const steps = body.steps.map(s => ({
     step_number: s.stepNumber,
     name: s.name,
     target_type: s.targetType,
@@ -220,7 +221,7 @@ const createWorkflowHandler = async (c) => {
       notify_at_hours: s.escalation.notifyAtHours,
       auto_approve_after_hours: s.escalation.autoApproveAfterHours,
     } : undefined,
-  }));
+  })) as WorkflowStep[];
 
   const workflow = await createWorkflow(
     body.name,
@@ -236,7 +237,7 @@ const createWorkflowHandler = async (c) => {
     userId
   );
 
-  return c.json(mapWorkflow(workflow), 201);
+  return c.json(mapWorkflow(workflow) as any, 201);
 };
 workflowRouter.openapi(createWorkflowRoute, createWorkflowHandler);
 
@@ -267,12 +268,12 @@ const updateWorkflowRoute = createRoute({
   },
 });
 
-const updateWorkflowHandler = async (c) => {
+const updateWorkflowHandler: RouteHandler<typeof updateWorkflowRoute> = async (c) => {
   const { workflowId } = c.req.valid('param');
-  const body = c.req.valid('json');
+  const body = c.req.valid('json') as z.infer<typeof UpdateWorkflowRequestSchema>;
   const userId = getUserId(c);
 
-  const steps: WorkflowStep[] | undefined = body.steps?.map(s => ({
+  const steps = body.steps?.map(s => ({
     step_number: s.stepNumber,
     name: s.name,
     target_type: s.targetType,
@@ -288,7 +289,7 @@ const updateWorkflowHandler = async (c) => {
       notify_at_hours: s.escalation.notifyAtHours,
       auto_approve_after_hours: s.escalation.autoApproveAfterHours,
     } : undefined,
-  }));
+  })) as WorkflowStep[] | undefined;
 
   const workflow = await updateWorkflow(workflowId, {
     description: body.description,
@@ -302,7 +303,7 @@ const updateWorkflowHandler = async (c) => {
     onReturnPolicy: body.onReturnPolicy,
   }, userId);
 
-  return c.json(mapWorkflow(workflow), 200);
+  return c.json(mapWorkflow(workflow) as any, 200);
 };
 workflowRouter.openapi(updateWorkflowRoute, updateWorkflowHandler);
 
@@ -342,7 +343,7 @@ const submitReportRoute = createRoute({
   },
 });
 
-const submitReportHandler = async (c) => {
+const submitReportHandler: RouteHandler<typeof submitReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
@@ -352,7 +353,7 @@ const submitReportHandler = async (c) => {
     success: result.success,
     currentStep: result.currentStep,
     workflow: mapWorkflow(result.workflow),
-  }, 200);
+  } as any, 200);
 };
 workflowRouter.openapi(submitReportRoute, submitReportHandler);
 
@@ -387,7 +388,7 @@ const approveReportRoute = createRoute({
   },
 });
 
-const approveReportHandler = async (c) => {
+const approveReportHandler: RouteHandler<typeof approveReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
@@ -398,7 +399,7 @@ const approveReportHandler = async (c) => {
     success: result.success,
     isFullyApproved: result.isFullyApproved,
     nextStep: result.nextStep,
-  }, 200);
+  } as any, 200);
 };
 workflowRouter.openapi(approveReportRoute, approveReportHandler);
 
@@ -433,14 +434,14 @@ const rejectReportRoute = createRoute({
   },
 });
 
-const rejectReportHandler = async (c) => {
+const rejectReportHandler: RouteHandler<typeof rejectReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment, rejectionCategory } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
   const result = await rejectReport(reportId, authUser.id, authUser.email, comment, rejectionCategory);
 
-  return c.json({ success: result.success }, 200);
+  return c.json({ success: result.success } as any, 200);
 };
 workflowRouter.openapi(rejectReportRoute, rejectReportHandler);
 
@@ -475,14 +476,14 @@ const returnReportRoute = createRoute({
   },
 });
 
-const returnReportHandler = async (c) => {
+const returnReportHandler: RouteHandler<typeof returnReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const { comment } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
   const result = await returnReport(reportId, authUser.id, authUser.email, comment);
 
-  return c.json({ success: result.success }, 200);
+  return c.json({ success: result.success } as any, 200);
 };
 workflowRouter.openapi(returnReportRoute, returnReportHandler);
 
@@ -514,13 +515,13 @@ const withdrawReportRoute = createRoute({
   },
 });
 
-const withdrawReportHandler = async (c) => {
+const withdrawReportHandler: RouteHandler<typeof withdrawReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const userId = getUserId(c);
 
   const result = await withdrawReport(reportId, userId);
 
-  return c.json({ success: result.success }, 200);
+  return c.json({ success: result.success } as any, 200);
 };
 workflowRouter.openapi(withdrawReportRoute, withdrawReportHandler);
 
@@ -556,13 +557,13 @@ const reviseReportRoute = createRoute({
   },
 });
 
-const reviseReportHandler = async (c) => {
+const reviseReportHandler: RouteHandler<typeof reviseReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
   const authUser = getAuthUser(c);
 
   const result = await reviseReport(reportId, authUser.id, authUser.email);
 
-  return c.json({ success: result.success }, 200);
+  return c.json({ success: result.success } as any, 200);
 };
 workflowRouter.openapi(reviseReportRoute, reviseReportHandler);
 
@@ -589,7 +590,7 @@ const getReportStatusRoute = createRoute({
   },
 });
 
-const getReportStatusHandler = async (c) => {
+const getReportStatusHandler: RouteHandler<typeof getReportStatusRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
 
   const status = await getReportWorkflowStatus(reportId);
@@ -604,7 +605,7 @@ const getReportStatusHandler = async (c) => {
     totalSteps: status.totalSteps,
     workflow: status.workflow ? mapWorkflow(status.workflow) : null,
     history: status.history.map(mapHistory),
-  }, 200);
+  } as any, 200);
 };
 workflowRouter.openapi(getReportStatusRoute, getReportStatusHandler);
 
@@ -628,7 +629,7 @@ const getPendingApprovalsRoute = createRoute({
   },
 });
 
-const getPendingApprovalsHandler = async (c) => {
+const getPendingApprovalsHandler: RouteHandler<typeof getPendingApprovalsRoute> = async (c) => {
   const authUser = getAuthUser(c);
   const approvals = await getPendingApprovalsForUser(authUser.id, authUser.roles);
 
@@ -638,7 +639,7 @@ const getPendingApprovalsHandler = async (c) => {
       submitted_at: a.submitted_at.toISOString(),
     })),
     total: approvals.length,
-  }, 200);
+  } as any, 200);
 };
 workflowRouter.openapi(getPendingApprovalsRoute, getPendingApprovalsHandler);
 

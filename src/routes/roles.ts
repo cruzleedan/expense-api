@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
@@ -107,7 +108,7 @@ const listRolesRoute = createRoute({
   },
 });
 
-const listRolesHandler = async (c) => {
+const listRolesHandler: RouteHandler<typeof listRolesRoute> = async (c) => {
   const query = c.req.valid('query');
   const paginationParams = {
     page: query.page,
@@ -140,7 +141,7 @@ const listRolesHandler = async (c) => {
       hasNext: paginationParams.page < totalPages,
       hasPrev: paginationParams.page > 1,
     },
-  }, 200);
+  } as any, 200);
 };
 rolesRouter.openapi(listRolesRoute, listRolesHandler);
 
@@ -172,7 +173,7 @@ const getRoleRoute = createRoute({
   },
 });
 
-const getRoleHandler = async (c) => {
+const getRoleHandler: RouteHandler<typeof getRoleRoute> = async (c) => {
   const { roleId } = c.req.valid('param');
   const role = await getRoleById(roleId);
 
@@ -190,7 +191,7 @@ const getRoleHandler = async (c) => {
       ...p,
       created_at: p.created_at.toISOString(),
     })),
-  }, 200);
+  } as any, 200);
 };
 rolesRouter.openapi(getRoleRoute, getRoleHandler);
 
@@ -224,7 +225,7 @@ const createRoleRoute = createRoute({
   },
 });
 
-const createRoleHandler = async (c) => {
+const createRoleHandler: RouteHandler<typeof createRoleRoute> = async (c) => {
   const { name, description, permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
 
@@ -234,7 +235,7 @@ const createRoleHandler = async (c) => {
       ...role,
       created_at: role.created_at.toISOString(),
       updated_at: role.updated_at.toISOString(),
-    }, 201);
+    } as any, 201);
   } catch (error) {
     if (error instanceof Error && error.message.includes('duplicate key')) {
       throw new ValidationError('Role name already exists');
@@ -279,7 +280,7 @@ const updateRoleRoute = createRoute({
   },
 });
 
-const updateRoleHandler = async (c) => {
+const updateRoleHandler: RouteHandler<typeof updateRoleRoute> = async (c) => {
   const { roleId } = c.req.valid('param');
   const { permissionIds } = c.req.valid('json');
   const userId = getUserId(c);
@@ -327,7 +328,7 @@ const deleteRoleRoute = createRoute({
   },
 });
 
-const deleteRoleHandler = async (c) => {
+const deleteRoleHandler: RouteHandler<typeof deleteRoleRoute> = async (c) => {
   const { roleId } = c.req.valid('param');
 
   const role = await getRoleById(roleId);
@@ -376,7 +377,7 @@ const getUserRolesRoute = createRoute({
   },
 });
 
-const getUserRolesHandler = async (c) => {
+const getUserRolesHandler: RouteHandler<typeof getUserRolesRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const roles = await getUserRoles(userId);
 
@@ -387,7 +388,7 @@ const getUserRolesHandler = async (c) => {
       created_at: r.created_at.toISOString(),
       updated_at: r.updated_at.toISOString(),
     })),
-  }, 200);
+  } as any, 200);
 };
 rolesRouter.openapi(getUserRolesRoute, getUserRolesHandler);
 
@@ -422,7 +423,7 @@ const setUserRolesRoute = createRoute({
   },
 });
 
-const setUserRolesHandler = async (c) => {
+const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
   const adminId = getUserId(c);
@@ -443,7 +444,7 @@ const setUserRolesHandler = async (c) => {
   // Validate SoD before assignment
   const sodResult = await validateRoleAssignmentSod(userId, roleIds);
   if (!sodResult.valid) {
-    return c.json(sodResult, 400);
+    return c.json(sodResult as any, 400);
   }
 
   await setUserRoles(userId, roleIds, adminId);
@@ -479,7 +480,7 @@ const addUserRoleRoute = createRoute({
   },
 });
 
-const addUserRoleHandler = async (c) => {
+const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
   const adminId = getUserId(c);
@@ -501,7 +502,7 @@ const addUserRoleHandler = async (c) => {
   // Validate SoD
   const sodResult = await validateRoleAssignmentSod(userId, [roleId]);
   if (!sodResult.valid) {
-    return c.json(sodResult, 400);
+    return c.json(sodResult as any, 400);
   }
 
   await assignRoleToUser(userId, roleId, adminId);
@@ -530,7 +531,7 @@ const removeUserRoleRoute = createRoute({
   },
 });
 
-const removeUserRoleHandler = async (c) => {
+const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { userId, roleId } = c.req.valid('param');
 
   await removeRoleFromUser(userId, roleId);
@@ -559,10 +560,10 @@ const validateUserSodRoute = createRoute({
   },
 });
 
-const validateUserSodHandler = async (c) => {
+const validateUserSodHandler: RouteHandler<typeof validateUserSodRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const result = await validateUserSod(userId);
-  return c.json(result, 200);
+  return c.json(result as any, 200);
 };
 rolesRouter.openapi(validateUserSodRoute, validateUserSodHandler);
 
