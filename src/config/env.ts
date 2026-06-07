@@ -35,7 +35,7 @@ const envSchema = z.object({
   S3_PRESIGNED_URL_EXPIRES: z.coerce.number().default(3600), // 1 hour
 
   // Receipt Parser Service
-  RECEIPT_PARSER_URL: z.string().url().default('http://receipt-parser-app:3000'),
+  RECEIPT_PARSER_URL: z.string().url().default('http://receipt-parser-app:8000'),
   RECEIPT_PARSER_TIMEOUT: z.coerce.number().default(30000), // 30 seconds
 
   // Rate Limiting

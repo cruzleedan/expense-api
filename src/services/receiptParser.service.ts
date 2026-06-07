@@ -63,79 +63,8 @@ function transformResponse(response: ReceiptParserAPIResponse): ParsedReceiptDat
 }
 
 /**
- * Call the receipt-parser-app service to parse a receipt image/PDF.
- * Sends the file as multipart/form-data.
+ * Parse a receipt from a buffer. Core implementation used by all parse paths.
  * Returns null on failure (graceful degradation).
- */
-export async function parseReceipt(
-  filePath: string,
-  mimeType: string
-): Promise<ParsedReceiptData | null> {
-  const url = `${env.RECEIPT_PARSER_URL}/parse`;
-
-  try {
-    logger.debug('Calling receipt parser service', { url, filePath, mimeType });
-
-    // Read the file from disk
-    const fs = await import('fs/promises');
-    const fileBuffer = await fs.readFile(filePath);
-    const fileName = filePath.split('/').pop() || 'receipt';
-
-    // Create FormData with the file
-    const formData = new FormData();
-    const blob = new Blob([fileBuffer], { type: mimeType });
-    formData.append('file', blob, fileName);
-
-    const response = await fetch(url, {
-      method: 'POST',
-      body: formData,
-      signal: AbortSignal.timeout(env.RECEIPT_PARSER_TIMEOUT),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      logger.warn('Receipt parser returned error', {
-        status: response.status,
-        error: errorText,
-      });
-      return null;
-    }
-
-    const result = (await response.json()) as ReceiptParserAPIResponse;
-
-    // Transform to our format
-    const parsedData = transformResponse(result);
-
-    logger.info('Receipt parsed successfully', {
-      vendor: parsedData.vendor,
-      total: parsedData.total,
-      processingTimeMs: result.processing_metadata?.total_time_ms,
-    });
-
-    return parsedData;
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        logger.error('Receipt parser timed out', {
-          timeout: env.RECEIPT_PARSER_TIMEOUT,
-        });
-      } else if (error.message.includes('fetch') || error.message.includes('ECONNREFUSED')) {
-        logger.error('Receipt parser service unavailable', {
-          url,
-          error: error.message,
-        });
-      } else {
-        logger.error('Receipt parser error', { error: error.message });
-      }
-    }
-
-    // Graceful degradation - return null on any error
-    return null;
-  }
-}
-
-/**
- * Parse a receipt from a buffer (for use with S3 storage)
  */
 export async function parseReceiptFromBuffer(
   fileBuffer: Buffer,
@@ -145,9 +74,8 @@ export async function parseReceiptFromBuffer(
   const url = `${env.RECEIPT_PARSER_URL}/parse`;
 
   try {
-    logger.debug('Calling receipt parser service with buffer', { url, fileName, mimeType });
+    logger.debug('Calling receipt parser service', { url, fileName, mimeType });
 
-    // Create FormData with the file
     const formData = new FormData();
     const blob = new Blob([fileBuffer], { type: mimeType });
     formData.append('file', blob, fileName);
@@ -168,8 +96,6 @@ export async function parseReceiptFromBuffer(
     }
 
     const result = (await response.json()) as ReceiptParserAPIResponse;
-
-    // Transform to our format
     const parsedData = transformResponse(result);
 
     logger.info('Receipt parsed successfully', {
@@ -182,22 +108,29 @@ export async function parseReceiptFromBuffer(
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        logger.error('Receipt parser timed out', {
-          timeout: env.RECEIPT_PARSER_TIMEOUT,
-        });
+        logger.error('Receipt parser timed out', { timeout: env.RECEIPT_PARSER_TIMEOUT });
       } else if (error.message.includes('fetch') || error.message.includes('ECONNREFUSED')) {
-        logger.error('Receipt parser service unavailable', {
-          url,
-          error: error.message,
-        });
+        logger.error('Receipt parser service unavailable', { url, error: error.message });
       } else {
         logger.error('Receipt parser error', { error: error.message });
       }
     }
-
-    // Graceful degradation - return null on any error
     return null;
   }
+}
+
+/**
+ * Parse a receipt from a local file path.
+ * Returns null on failure (graceful degradation).
+ */
+export async function parseReceipt(
+  filePath: string,
+  mimeType: string
+): Promise<ParsedReceiptData | null> {
+  const fs = await import('fs/promises');
+  const fileBuffer = await fs.readFile(filePath);
+  const fileName = filePath.split('/').pop() || 'receipt';
+  return parseReceiptFromBuffer(fileBuffer, fileName, mimeType);
 }
 
 /**
@@ -215,10 +148,6 @@ export async function isParserAvailable(): Promise<boolean> {
   }
 }
 
-/**
- * Re-parse a receipt that's already stored in the system.
- * Returns parsed data with processing metadata.
- */
 export interface ReparseReceiptResult {
   success: boolean;
   data?: ParsedReceiptData;
@@ -229,66 +158,24 @@ export interface ReparseReceiptResult {
   processingTimeMs: number;
 }
 
+/**
+ * Re-parse a receipt that's already stored in the system.
+ */
 export async function reparseReceipt(
   filePath: string,
   mimeType: string
 ): Promise<ReparseReceiptResult> {
   const startTime = Date.now();
+  const data = await parseReceipt(filePath, mimeType);
+  const processingTimeMs = Date.now() - startTime;
 
-  try {
-    const data = await parseReceipt(filePath, mimeType);
-    const processingTimeMs = Date.now() - startTime;
-
-    if (!data) {
-      return {
-        success: false,
-        error: {
-          code: 'PARSE_FAILED',
-          message: 'Failed to parse receipt data',
-        },
-        processingTimeMs,
-      };
-    }
-
-    return {
-      success: true,
-      data,
-      processingTimeMs,
-    };
-  } catch (error) {
-    const processingTimeMs = Date.now() - startTime;
-
-    if (error instanceof Error) {
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        return {
-          success: false,
-          error: {
-            code: 'PARSE_TIMEOUT',
-            message: 'Receipt parsing timed out',
-          },
-          processingTimeMs,
-        };
-      }
-
-      if (error.message.includes('fetch') || error.message.includes('ECONNREFUSED')) {
-        return {
-          success: false,
-          error: {
-            code: 'SERVICE_UNAVAILABLE',
-            message: 'Receipt parser service is unavailable',
-          },
-          processingTimeMs,
-        };
-      }
-    }
-
+  if (!data) {
     return {
       success: false,
-      error: {
-        code: 'PARSE_ERROR',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      },
+      error: { code: 'PARSE_FAILED', message: 'Failed to parse receipt data' },
       processingTimeMs,
     };
   }
+
+  return { success: true, data, processingTimeMs };
 }

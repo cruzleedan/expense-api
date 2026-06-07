@@ -2,7 +2,7 @@ services:
   expense-api:
     build:
       context: .
-      dockerfile: Dockerfile.dev # Use the new Debian file for development
+      dockerfile: Dockerfile.dev
       target: development
     container_name: expense-api
     ports:
@@ -12,13 +12,12 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - DATABASE_URL=postgresql://expense_user:expense_pass@postgres:5432/expense_db
-      - JWT_SECRET=your-super-secret-jwt-key-change-in-production-min-32-chars
+      - DATABASE_URL=postgresql://expense_user:${POSTGRES_PASSWORD:-expense_pass}@postgres:5432/expense_db
       - UPLOAD_DIR=/app/uploads
       - RECEIPT_PARSER_URL=http://receipt-parser-app:8000
     volumes:
       - .:/app
-      - /app/node_modules # Prevent overwriting node_modules
+      - /app/node_modules
       - uploads_data:/app/uploads
     depends_on:
       postgres:
@@ -33,7 +32,7 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       - POSTGRES_USER=expense_user
-      - POSTGRES_PASSWORD=expense_pass
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-expense_pass}
       - POSTGRES_DB=expense_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -62,3 +61,4 @@ networks:
     external: true
   shared-ollama-network:
     external: true
+    name: shared-ollama-network
