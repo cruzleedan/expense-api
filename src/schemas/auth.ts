@@ -19,6 +19,14 @@ export const RefreshRequestSchema = z.object({
   refreshToken: z.string().optional().openapi({ description: 'Optional if sent via cookie' }),
 }).openapi('RefreshRequest');
 
+export const GoogleMobileLoginRequestSchema = z.object({
+  idToken: z.string().openapi({ description: 'Google ID token from native google_sign_in SDK' }),
+}).openapi('GoogleMobileLoginRequest');
+
+export const FacebookMobileLoginRequestSchema = z.object({
+  accessToken: z.string().openapi({ description: 'Facebook access token from native flutter_facebook_auth SDK' }),
+}).openapi('FacebookMobileLoginRequest');
+
 export const AuthResponseSchema = z.object({
   user: AuthUserSchema,
   accessToken: z.string(),

@@ -10,6 +10,8 @@ import {
   getFacebookAuthUrl,
   exchangeGoogleCode,
   exchangeFacebookCode,
+  verifyGoogleIdToken,
+  verifyFacebookAccessToken,
   loginWithOAuth,
 } from '../services/auth.service.js';
 import { deleteUser, updateUser } from '../services/user.service.js';
@@ -21,6 +23,8 @@ import {
   RefreshRequestSchema,
   AuthResponseSchema,
   TokenResponseSchema,
+  GoogleMobileLoginRequestSchema,
+  FacebookMobileLoginRequestSchema,
 } from '../schemas/auth.js';
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
 
@@ -320,6 +324,82 @@ authRouter.openapi(facebookCallbackRoute, async (c) => {
   setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
 
   const facebookUser = await exchangeFacebookCode(code);
+  const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email);
+
+  setRefreshTokenCookie(c, tokens.refreshToken);
+
+  return c.json({
+    user: { id: user.id, email: user.email },
+    accessToken: tokens.accessToken,
+  }, 200);
+});
+
+// Google mobile sign-in (native SDK ID token)
+const googleMobileLoginRoute = createRoute({
+  method: 'post',
+  path: '/google/mobile',
+  tags: ['Authentication'],
+  summary: 'Sign in with Google (mobile)',
+  description: 'Verify a Google ID token from a native SDK (e.g. google_sign_in) and return tokens',
+  request: {
+    body: {
+      content: { 'application/json': { schema: GoogleMobileLoginRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Sign-in successful',
+      content: { 'application/json': { schema: AuthResponseSchema } },
+    },
+    400: {
+      description: 'Invalid Google ID token',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+authRouter.openapi(googleMobileLoginRoute, async (c) => {
+  const { idToken } = c.req.valid('json');
+
+  const googleUser = await verifyGoogleIdToken(idToken);
+  const { user, tokens } = await loginWithOAuth('google', googleUser.id, googleUser.email);
+
+  setRefreshTokenCookie(c, tokens.refreshToken);
+
+  return c.json({
+    user: { id: user.id, email: user.email },
+    accessToken: tokens.accessToken,
+  }, 200);
+});
+
+// Facebook mobile sign-in (native SDK access token)
+const facebookMobileLoginRoute = createRoute({
+  method: 'post',
+  path: '/facebook/mobile',
+  tags: ['Authentication'],
+  summary: 'Sign in with Facebook (mobile)',
+  description: 'Verify a Facebook access token from a native SDK (e.g. flutter_facebook_auth) and return tokens',
+  request: {
+    body: {
+      content: { 'application/json': { schema: FacebookMobileLoginRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Sign-in successful',
+      content: { 'application/json': { schema: AuthResponseSchema } },
+    },
+    400: {
+      description: 'Invalid Facebook access token',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+authRouter.openapi(facebookMobileLoginRoute, async (c) => {
+  const { accessToken } = c.req.valid('json');
+
+  const facebookUser = await verifyFacebookAccessToken(accessToken);
   const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email);
 
   setRefreshTokenCookie(c, tokens.refreshToken);

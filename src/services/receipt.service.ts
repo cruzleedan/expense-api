@@ -5,7 +5,7 @@ import { verifyReportOwnership } from './expenseReport.service.js'; // kept for 
 import { sha256 } from '../utils/hash.js';
 import { getStorage } from '../storage/localStorage.js';
 import type { PresignedDownloadUrl } from '../storage/storage.interface.js';
-import { parseReceipt, parseReceiptFromBuffer, type ReparseReceiptResult } from './receiptParser.service.js';
+import { parseReceiptFromBuffer, type ReparseReceiptResult } from './receiptParser.service.js';
 import {
   getOffset,
   buildOrderByClause,
@@ -63,8 +63,39 @@ export async function uploadReceipt(
 
   const fileHash = sha256(input.file);
 
-  const existingResult = await query<{ id: string }>('SELECT id FROM receipts WHERE file_hash = $1', [fileHash]);
-  if (existingResult.rows.length > 0) throw new ConflictError('Duplicate receipt: this file has already been uploaded');
+  const existingResult = await query<Receipt>('SELECT * FROM receipts WHERE file_hash = $1', [fileHash]);
+  if (existingResult.rows.length > 0) {
+    const existing = existingResult.rows[0];
+    if (existing.user_id !== userId) throw new ConflictError('Duplicate receipt: this file has already been uploaded');
+
+    if (input.lineId) {
+      await query(
+        `INSERT INTO receipt_line_associations (receipt_id, line_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [existing.id, input.lineId]
+      );
+    }
+
+    if (!input.icr) throw new ConflictError('Duplicate receipt: this file has already been uploaded');
+
+    let parsedData = existing.parsed_data ?? null;
+    const hadCachedParsedData = !!parsedData;
+    if (!parsedData) {
+      parsedData = await parseReceiptFromBuffer(input.file, input.fileName, input.mimeType);
+      if (parsedData) {
+        await query('UPDATE receipts SET parsed_data = $1 WHERE id = $2', [JSON.stringify(parsedData), existing.id]);
+        existing.parsed_data = parsedData;
+      }
+    }
+
+    logger.info('Duplicate receipt upload reused for ICR', {
+      receiptId: existing.id,
+      lineId: input.lineId ?? null,
+      reusedCachedParsedData: hadCachedParsedData,
+      parsed: !!parsedData,
+    });
+
+    return { receipt: existing, parsedData };
+  }
 
   const storage = getStorage();
   const filePath = await storage.save(input.file, input.fileName);
@@ -87,8 +118,7 @@ export async function uploadReceipt(
   }
 
   if (input.icr) {
-    const fullPath = `${env.UPLOAD_DIR}/${filePath}`;
-    parsedData = await parseReceipt(fullPath, input.mimeType);
+    parsedData = await parseReceiptFromBuffer(input.file, input.fileName, input.mimeType);
     if (parsedData) {
       await query('UPDATE receipts SET parsed_data = $1 WHERE id = $2', [JSON.stringify(parsedData), receipt.id]);
       receipt.parsed_data = parsedData;

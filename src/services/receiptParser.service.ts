@@ -120,20 +120,6 @@ export async function parseReceiptFromBuffer(
 }
 
 /**
- * Parse a receipt from a local file path.
- * Returns null on failure (graceful degradation).
- */
-export async function parseReceipt(
-  filePath: string,
-  mimeType: string
-): Promise<ParsedReceiptData | null> {
-  const fs = await import('fs/promises');
-  const fileBuffer = await fs.readFile(filePath);
-  const fileName = filePath.split('/').pop() || 'receipt';
-  return parseReceiptFromBuffer(fileBuffer, fileName, mimeType);
-}
-
-/**
  * Check if the receipt parser service is available.
  */
 export async function isParserAvailable(): Promise<boolean> {
@@ -156,26 +142,4 @@ export interface ReparseReceiptResult {
     message: string;
   };
   processingTimeMs: number;
-}
-
-/**
- * Re-parse a receipt that's already stored in the system.
- */
-export async function reparseReceipt(
-  filePath: string,
-  mimeType: string
-): Promise<ReparseReceiptResult> {
-  const startTime = Date.now();
-  const data = await parseReceipt(filePath, mimeType);
-  const processingTimeMs = Date.now() - startTime;
-
-  if (!data) {
-    return {
-      success: false,
-      error: { code: 'PARSE_FAILED', message: 'Failed to parse receipt data' },
-      processingTimeMs,
-    };
-  }
-
-  return { success: true, data, processingTimeMs };
 }

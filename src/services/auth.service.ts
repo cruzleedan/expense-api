@@ -789,3 +789,81 @@ export async function exchangeFacebookCode(code: string): Promise<{ id: string; 
 
   return { id: userData.id, email: userData.email };
 }
+
+// Google JWKS for verifying ID tokens from native (mobile) sign-in
+const GOOGLE_JWKS = jose.createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+
+// Verify a Google ID token obtained from a native SDK (e.g. google_sign_in)
+export async function verifyGoogleIdToken(idToken: string): Promise<{ id: string; email: string }> {
+  const allowedAudiences = (env.GOOGLE_MOBILE_CLIENT_IDS || '')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
+
+  if (allowedAudiences.length === 0) {
+    throw new ValidationError('Google mobile sign-in not configured');
+  }
+
+  let payload: jose.JWTPayload;
+  try {
+    const result = await jose.jwtVerify(idToken, GOOGLE_JWKS, {
+      issuer: ['https://accounts.google.com', 'accounts.google.com'],
+      audience: allowedAudiences,
+    });
+    payload = result.payload;
+  } catch (error) {
+    logger.warn('Google ID token verification failed', { error: error instanceof Error ? error.message : error });
+    throw new ValidationError('Invalid Google ID token');
+  }
+
+  if (!payload.sub || typeof payload.email !== 'string') {
+    throw new ValidationError('Invalid Google ID token');
+  }
+
+  return { id: payload.sub, email: payload.email };
+}
+
+// Verify a Facebook access token obtained from a native SDK (e.g. flutter_facebook_auth)
+export async function verifyFacebookAccessToken(accessToken: string): Promise<{ id: string; email: string }> {
+  if (!env.FACEBOOK_CLIENT_ID || !env.FACEBOOK_CLIENT_SECRET) {
+    throw new ValidationError('Facebook mobile sign-in not configured');
+  }
+
+  // Confirm the token is valid and was issued for this app
+  const appAccessToken = `${env.FACEBOOK_CLIENT_ID}|${env.FACEBOOK_CLIENT_SECRET}`;
+  const debugParams = new URLSearchParams({
+    input_token: accessToken,
+    access_token: appAccessToken,
+  });
+
+  const debugResponse = await fetch(`https://graph.facebook.com/debug_token?${debugParams}`);
+
+  if (!debugResponse.ok) {
+    throw new ValidationError('Invalid Facebook access token');
+  }
+
+  const debugData = await debugResponse.json() as {
+    data?: { is_valid: boolean; app_id: string; user_id: string };
+  };
+
+  if (!debugData.data?.is_valid || debugData.data.app_id !== env.FACEBOOK_CLIENT_ID) {
+    throw new ValidationError('Invalid Facebook access token');
+  }
+
+  // Fetch profile using the provided user access token
+  const userResponse = await fetch(
+    `https://graph.facebook.com/me?fields=id,email&access_token=${accessToken}`
+  );
+
+  if (!userResponse.ok) {
+    throw new ValidationError('Invalid Facebook access token');
+  }
+
+  const userData = await userResponse.json() as { id: string; email?: string };
+
+  if (!userData.email) {
+    throw new ValidationError('Email not provided by Facebook');
+  }
+
+  return { id: userData.id, email: userData.email };
+}

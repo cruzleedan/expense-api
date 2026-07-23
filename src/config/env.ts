@@ -16,6 +16,9 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  // Mobile (native) OAuth client ID(s) - audience for ID tokens from google_sign_in.
+  // Accepts a comma-separated list since Android/iOS use separate client IDs.
+  GOOGLE_MOBILE_CLIENT_IDS: z.string().optional(),
 
   // OAuth - Facebook
   FACEBOOK_CLIENT_ID: z.string().optional(),
