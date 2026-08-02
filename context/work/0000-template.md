@@ -1,7 +1,7 @@
 ---
 id: NNNN
 title: ""
-status: proposed     # proposed | accepted | building | shipped | operating | rejected | abandoned
+status: proposed     # proposed | accepted | building | shipped | operating | superseded | rejected | abandoned
 kind: feature         # feature | fix | migration | infra | spike
 opened: YYYY-MM-DD
 decided: ~            # date status moved to accepted — leave ~ until then
