@@ -56,21 +56,12 @@ than all-or-nothing failing on one bad row.
   load-bearing; not confirmed as part of this migration
 
 **Risks / Open questions:**
-- Verified against `expense-tracker`'s actual code (2026-08-02): the API
-  client method (`createBulkExpenseLines`) and a mutation hook
-  (`createBulkLines` in `useExpenseLines.ts`) exist and correctly target
-  this endpoint — but neither is called anywhere. The ICR confirmation
-  modal (`ParsedReceiptConfirmationModal.tsx` via `ReportDetailPage.tsx`)
-  stages parsed rows into the local table
-  (`expenseLinesRef.current?.addRows(...)`) instead, with an explicit code
-  comment: "Add rows to the local expense lines table (not to server) —
-  User must click Save to persist changes." So this endpoint is unused —
-  the actual save path goes through the pre-existing single-line create
-  flow, not bulk. `expense-tracker`
-  `context/work/0010-expense-line-icr.md` is still `status: proposed` and
-  its Definition of done doesn't yet reflect this partial-build state. Not
-  resolved here; flagging for whoever picks up WORK-0010 next in
-  `expense-tracker`.
+- Resolved 2026-08-02 (see Log): the frontend's dead bulk-create plumbing
+  identified below has been wired up in `expense-tracker`. Verified
+  end-to-end against this live endpoint — see `expense-tracker`
+  `context/work/0010-expense-line-icr.md` for the fix and a separate,
+  pre-existing bug it exposed (ICR amount extraction not reaching the
+  confirmation modal's row, unrelated to this endpoint).
 
 ## Definition of done
 
@@ -84,6 +75,15 @@ than all-or-nothing failing on one bad row.
 - 2026-02-03 accepted — migrated from loose `enhancement_plan/icr_enhancement.md`
   to this work item during framework consolidation (2026-08-02); confirmed
   already implemented in `src/routes/expenseLines.ts` at migration time
+- 2026-08-02 — frontend counterpart wired up in `expense-tracker` (was
+  previously dead plumbing, see prior Risks note). Verified end-to-end: a
+  request from `expense-tracker` reached this endpoint with the correct
+  shape (`description`, `amount`, `currency`, `categoryCode`,
+  `transactionDate`, `receiptId`), and a real validation failure
+  (`amount: 0`, from a separate unrelated frontend bug) correctly returned
+  via the `failed[]` array rather than a hard error — confirms the
+  partial-success contract works as designed under a real failure, not
+  just in theory.
 
 ## Implementation Notes
 
