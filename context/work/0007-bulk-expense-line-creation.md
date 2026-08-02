@@ -56,12 +56,21 @@ than all-or-nothing failing on one bad row.
   load-bearing; not confirmed as part of this migration
 
 **Risks / Open questions:**
-- The frontend counterpart, `expense-tracker`
-  `context/work/0010-expense-line-icr.md`, is still `status: proposed` as of
-  this record's creation — this backend endpoint is already built and
-  accepted, but the frontend work item describing its consumer hasn't been
-  advanced. Not resolved here; flagging for whoever picks up WORK-0010 next
-  in `expense-tracker`.
+- Verified against `expense-tracker`'s actual code (2026-08-02): the API
+  client method (`createBulkExpenseLines`) and a mutation hook
+  (`createBulkLines` in `useExpenseLines.ts`) exist and correctly target
+  this endpoint — but neither is called anywhere. The ICR confirmation
+  modal (`ParsedReceiptConfirmationModal.tsx` via `ReportDetailPage.tsx`)
+  stages parsed rows into the local table
+  (`expenseLinesRef.current?.addRows(...)`) instead, with an explicit code
+  comment: "Add rows to the local expense lines table (not to server) —
+  User must click Save to persist changes." So this endpoint is unused —
+  the actual save path goes through the pre-existing single-line create
+  flow, not bulk. `expense-tracker`
+  `context/work/0010-expense-line-icr.md` is still `status: proposed` and
+  its Definition of done doesn't yet reflect this partial-build state. Not
+  resolved here; flagging for whoever picks up WORK-0010 next in
+  `expense-tracker`.
 
 ## Definition of done
 
