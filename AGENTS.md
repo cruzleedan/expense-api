@@ -359,9 +359,12 @@ psql $DATABASE_URL -f src/db/schema.sql   # Apply schema
 
 Architectural decisions and proposals live in `context/work/` (see
 `context/work/0002-dual-data-access-sql-and-drizzle.md` for the Drizzle/SQL
-split, `context/work/0003-jwt-bearer-plus-httponly-cookie.md` for auth).
-Release conventions are in `context/RELEASING.md`. Log framework friction
-(not code bugs) in `context/friction.md`.
+split, `context/work/0003-jwt-bearer-plus-httponly-cookie.md` for auth,
+`context/work/0007-bulk-expense-line-creation.md` for the ICR bulk-create
+endpoint). Release conventions are in `context/RELEASING.md`. Log framework
+friction (not code bugs) in `context/friction.md`.
 
-`enhancement_plan/` predates this system and has not yet been migrated —
-treat it as historical planning material, not an authoritative source.
+`enhancement_plan/` (a v3.0 spec proposing Passport/Redis/RabbitMQ) has been
+consolidated and removed — its rejection is recorded in
+`context/work/0006-v3-enterprise-upgrade-spec.md`. Do not reintroduce that
+stack without a work item that explicitly supersedes it.
