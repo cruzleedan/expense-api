@@ -6,6 +6,7 @@ import {
   loginWithEmail,
   refreshTokens,
   logout,
+  revokeAllTokens,
   getGoogleAuthUrl,
   getFacebookAuthUrl,
   exchangeGoogleCode,
@@ -15,6 +16,7 @@ import {
   loginWithOAuth,
 } from '../services/auth.service.js';
 import { deleteUser, updateUser } from '../services/user.service.js';
+import { authMiddleware, getUserId } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 import { ValidationError } from '../types/index.js';
 import {
@@ -26,7 +28,7 @@ import {
   GoogleMobileLoginRequestSchema,
   FacebookMobileLoginRequestSchema,
 } from '../schemas/auth.js';
-import { ErrorSchema, MessageSchema } from '../schemas/common.js';
+import { ErrorSchema, MessageSchema, AuthHeaderSchema } from '../schemas/common.js';
 
 const authRouter = new OpenAPIHono();
 
@@ -192,6 +194,40 @@ authRouter.openapi(logoutRoute, async (c) => {
   });
 
   return c.json({ message: 'Logged out successfully' }, 200);
+});
+
+// Revoke all sessions route
+const revokeAllSessionsRoute = createRoute({
+  method: 'post',
+  path: '/sessions/revoke-all',
+  tags: ['Authentication'],
+  summary: 'Revoke all sessions',
+  description:
+    'Revoke every refresh token issued to the authenticated user (all devices and integrations, ' +
+    'including third-party access such as an MCP client). The current access token remains valid ' +
+    'until it expires, but no refresh token can be used to obtain a new one — re-authentication is required.',
+  security: [{ Bearer: [] }],
+  request: {
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'All sessions revoked',
+      content: { 'application/json': { schema: MessageSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+authRouter.use('/sessions/revoke-all', authMiddleware);
+
+authRouter.openapi(revokeAllSessionsRoute, async (c) => {
+  const userId = getUserId(c);
+  await revokeAllTokens(userId);
+  return c.json({ message: 'All sessions revoked' }, 200);
 });
 
 // Google OAuth - initiate
