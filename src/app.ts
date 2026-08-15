@@ -24,6 +24,8 @@ import { analyticsRouter } from './routes/analytics.js';
 import { insightsRouter } from './routes/insights.js';
 import { anomaliesRouter } from './routes/anomalies.js';
 import { adminAnalyticsRouter } from './routes/adminAnalytics.js';
+import { formDesignerRouter } from './routes/formDesigner.js';
+import { uiSchemasRouter } from './routes/uiSchemas.js';
 import { logger } from './utils/logger.js';
 
 const app = new OpenAPIHono();
@@ -65,6 +67,7 @@ app.use('/v1/analytics/*', rateLimit());
 app.use('/v1/insights/*', rateLimit());
 app.use('/v1/anomalies/*', rateLimit());
 app.use('/v1/admin/*', rateLimit());
+app.use('/v1/ui-schemas/*', rateLimit());
 
 // API v1 routes
 app.route('/v1/auth', authRouter);
@@ -86,6 +89,8 @@ app.route('/v1/analytics', analyticsRouter);
 app.route('/v1/insights', insightsRouter);
 app.route('/v1/anomalies', anomaliesRouter);
 app.route('/v1/admin/analytics', adminAnalyticsRouter);
+app.route('/v1/admin', formDesignerRouter);
+app.route('/v1/ui-schemas', uiSchemasRouter);
 
 // OpenAPI documentation
 app.doc('/openapi.json', {
@@ -125,6 +130,8 @@ app.doc('/openapi.json', {
     { name: 'Insights', description: 'Proactive spending insights and recommendations' },
     { name: 'Anomalies', description: 'Expense anomaly detection and review' },
     { name: 'Admin Analytics', description: 'Admin analytics dashboard for LLM usage and org-wide metrics' },
+    { name: 'Form Designer', description: 'Admin CRUD for dynamic form/field definitions (WORK-0010)' },
+    { name: 'UI Schemas', description: 'Role-aware, assembled form schemas for the expense app client' },
     { name: 'Expenses', description: 'Unified view of expense reports and orphaned expense lines' },
   ],
   security: [{ Bearer: [] }],
