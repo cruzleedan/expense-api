@@ -195,7 +195,7 @@ const updateFieldRoute = createRoute({
   path: '/fields/{fieldId}',
   tags: ['Form Designer'],
   summary: 'Update a field',
-  description: 'Update a field. label/hintText/helperText/sortOrder are always editable; fieldType/decimalPlaces/maxLines/optionsSource are rejected with 409 on system-defined fields.',
+  description: 'Update a field. label/hintText/helperText/sortOrder are always editable; fieldType/decimalPlaces/maxLines/lookupSource are rejected with 409 on system-defined fields.',
   security,
   middleware: [requirePermission('form.manage')] as const,
   request: {
@@ -319,7 +319,7 @@ const replaceOptionsRoute = createRoute({
   path: '/fields/{fieldId}/options',
   tags: ['Form Designer'],
   summary: 'Replace dropdown options',
-  description: 'Replace the full static option list for a dropdown field. Rejected if the field is not a dropdown, or has optionsSource set.',
+  description: 'Replace the full static option list for a dropdown field. Rejected if the field is not a dropdown (dropdown is always static — lookup fields never take options here).',
   security,
   middleware: [requirePermission('form.manage')] as const,
   request: {
@@ -329,7 +329,7 @@ const replaceOptionsRoute = createRoute({
   },
   responses: {
     200: { description: 'Options replaced', content: { 'application/json': { schema: z.array(FieldOptionSchema) } } },
-    400: { description: 'Field is not a dropdown, has optionsSource set, or duplicate codes', content: { 'application/json': { schema: ErrorSchema } } },
+    400: { description: 'Field is not a dropdown, or duplicate codes', content: { 'application/json': { schema: ErrorSchema } } },
     404: { description: 'Not found', content: { 'application/json': { schema: ErrorSchema } } },
   },
 });

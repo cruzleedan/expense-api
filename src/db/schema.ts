@@ -212,7 +212,7 @@ export const fieldDefinitions = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     formId: uuid().notNull().references(() => formDefinitions.id, { onDelete: 'cascade' }),
     fieldKey: varchar({ length: 100 }).notNull(),
-    fieldType: varchar({ length: 20 }).notNull(), // 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle'
+    fieldType: varchar({ length: 20 }).notNull(), // 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle' | 'lookup'
     label: varchar({ length: 255 }).notNull(),
     isSystemDefined: boolean().notNull().default(false),
     sortOrder: integer().notNull().default(0),
@@ -220,7 +220,7 @@ export const fieldDefinitions = pgTable(
     helperText: varchar({ length: 500 }),
     decimalPlaces: integer(),
     maxLines: integer(),
-    optionsSource: varchar({ length: 100 }),
+    lookupSource: varchar({ length: 100 }), // meaningful (and required) only when fieldType = 'lookup'
     createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
   },

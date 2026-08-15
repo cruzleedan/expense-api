@@ -241,7 +241,7 @@ CREATE TABLE IF NOT EXISTS field_definitions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     form_id UUID NOT NULL REFERENCES form_definitions(id) ON DELETE CASCADE,
     field_key VARCHAR(100) NOT NULL,
-    field_type VARCHAR(20) NOT NULL CHECK (field_type IN ('text', 'decimal', 'date', 'dropdown', 'toggle')),
+    field_type VARCHAR(20) NOT NULL CHECK (field_type IN ('text', 'decimal', 'date', 'dropdown', 'toggle', 'lookup')),
     label VARCHAR(255) NOT NULL,
     is_system_defined BOOLEAN NOT NULL DEFAULT false,  -- field_key/field_type/is_system_defined immutable once set; enforced at the API layer, not here
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -249,11 +249,30 @@ CREATE TABLE IF NOT EXISTS field_definitions (
     helper_text VARCHAR(500),
     decimal_places INTEGER,  -- decimal fields only
     max_lines INTEGER,  -- text fields only
-    options_source VARCHAR(100),  -- e.g. 'local:category' — client-resolved; null when options come from field_options instead
+    lookup_source VARCHAR(100),  -- e.g. 'local:category' — client-resolved; only meaningful (and required) when field_type = 'lookup'. WORK-0013: dropdown is always static now, this replaced dropdown's old dual-mode options_source
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (form_id, field_key)
 );
+
+-- WORK-0013 migration: upgrade an existing field_definitions table created
+-- under the pre-lookup-type shape (options_source column, dropdown dual-mode).
+-- Safe to re-run: no-ops once already migrated, no-ops on a table that
+-- didn't exist yet (the CREATE TABLE above already has the new shape).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'field_definitions' AND column_name = 'options_source'
+    ) THEN
+        UPDATE field_definitions SET field_type = 'lookup' WHERE field_type = 'dropdown' AND options_source IS NOT NULL;
+        ALTER TABLE field_definitions RENAME COLUMN options_source TO lookup_source;
+    END IF;
+END $$;
+
+ALTER TABLE field_definitions DROP CONSTRAINT IF EXISTS field_definitions_field_type_check;
+ALTER TABLE field_definitions ADD CONSTRAINT field_definitions_field_type_check
+    CHECK (field_type IN ('text', 'decimal', 'date', 'dropdown', 'toggle', 'lookup'));
 
 -- Per-field, per-role visibility/requiredness. No row for a (field, role)
 -- pair = default state: visible, optional, editable.
