@@ -12,6 +12,7 @@ import {
   vector,
   customType,
   primaryKey,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
@@ -189,6 +190,81 @@ export const sodRules = pgTable('sod_rules', {
   isActive: boolean().notNull().default(true),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
+
+// ============================================================================
+// FORM DESIGNER (WORK-0010) — queried via raw SQL (src/services/formDesigner.service.ts),
+// per ADR-0002; defined here for TypeScript types only.
+// ============================================================================
+
+export const formDefinitions = pgTable('form_definitions', {
+  id: uuid().primaryKey().defaultRandom(),
+  screenId: varchar({ length: 100 }).unique().notNull(),
+  name: varchar({ length: 255 }).notNull(),
+  version: integer().notNull().default(1),
+  status: varchar({ length: 20 }).notNull().default('draft'), // 'draft' | 'published'
+  createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+});
+
+export const fieldDefinitions = pgTable(
+  'field_definitions',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    formId: uuid().notNull().references(() => formDefinitions.id, { onDelete: 'cascade' }),
+    fieldKey: varchar({ length: 100 }).notNull(),
+    fieldType: varchar({ length: 20 }).notNull(), // 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle'
+    label: varchar({ length: 255 }).notNull(),
+    isSystemDefined: boolean().notNull().default(false),
+    sortOrder: integer().notNull().default(0),
+    hintText: varchar({ length: 500 }),
+    helperText: varchar({ length: 500 }),
+    decimalPlaces: integer(),
+    maxLines: integer(),
+    optionsSource: varchar({ length: 100 }),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.formId, t.fieldKey)]
+);
+
+export const fieldRoleRules = pgTable(
+  'field_role_rules',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+    roleId: uuid().notNull().references(() => roles.id, { onDelete: 'cascade' }),
+    state: varchar({ length: 20 }).notNull(), // 'required' | 'hidden' | 'read_only'
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.fieldId, t.roleId)]
+);
+
+export const fieldValidationRules = pgTable('field_validation_rules', {
+  id: uuid().primaryKey().defaultRandom(),
+  fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+  ruleType: varchar({ length: 20 }).notNull(),
+  ruleValue: varchar({ length: 255 }),
+  errorMessage: varchar({ length: 500 }),
+  sortOrder: integer().notNull().default(0),
+  createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+});
+
+export const fieldOptions = pgTable(
+  'field_options',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+    code: varchar({ length: 100 }).notNull(),
+    value: varchar({ length: 255 }).notNull(),
+    sortOrder: integer().notNull().default(0),
+    isActive: boolean().notNull().default(true),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.fieldId, t.code)]
+);
 
 // ============================================================================
 // WORKFLOWS
@@ -642,6 +718,11 @@ export type Permission = InferSelectModel<typeof permissions>;
 export type UserRole = InferSelectModel<typeof userRoles>;
 export type RolePermission = InferSelectModel<typeof rolePermissions>;
 export type SodRule = InferSelectModel<typeof sodRules>;
+export type FormDefinition = InferSelectModel<typeof formDefinitions>;
+export type FieldDefinition = InferSelectModel<typeof fieldDefinitions>;
+export type FieldRoleRule = InferSelectModel<typeof fieldRoleRules>;
+export type FieldValidationRule = InferSelectModel<typeof fieldValidationRules>;
+export type FieldOption = InferSelectModel<typeof fieldOptions>;
 export type Workflow = InferSelectModel<typeof workflows>;
 export type WorkflowAssignment = InferSelectModel<typeof workflowAssignments>;
 export type ExpenseReport = InferSelectModel<typeof expenseReports>;

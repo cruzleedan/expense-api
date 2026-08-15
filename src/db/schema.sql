@@ -219,6 +219,86 @@ CREATE TABLE IF NOT EXISTS workflow_assignments (
 );
 
 -- ============================================================================
+-- FORM DESIGNER TABLES (WORK-0010)
+-- ============================================================================
+-- Admin-configurable server-driven UI schemas for the expense app. See
+-- context/work/0010-dynamic-form-designer-api.md. Additive; does not touch
+-- expense_lines/expense_reports/expense_categories.
+
+-- One row per screen (e.g. "expense_line")
+CREATE TABLE IF NOT EXISTS form_definitions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    screen_id VARCHAR(100) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One row per field on a form
+CREATE TABLE IF NOT EXISTS field_definitions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id UUID NOT NULL REFERENCES form_definitions(id) ON DELETE CASCADE,
+    field_key VARCHAR(100) NOT NULL,
+    field_type VARCHAR(20) NOT NULL CHECK (field_type IN ('text', 'decimal', 'date', 'dropdown', 'toggle')),
+    label VARCHAR(255) NOT NULL,
+    is_system_defined BOOLEAN NOT NULL DEFAULT false,  -- field_key/field_type/is_system_defined immutable once set; enforced at the API layer, not here
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    hint_text VARCHAR(500),
+    helper_text VARCHAR(500),
+    decimal_places INTEGER,  -- decimal fields only
+    max_lines INTEGER,  -- text fields only
+    options_source VARCHAR(100),  -- e.g. 'local:category' — client-resolved; null when options come from field_options instead
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (form_id, field_key)
+);
+
+-- Per-field, per-role visibility/requiredness. No row for a (field, role)
+-- pair = default state: visible, optional, editable.
+CREATE TABLE IF NOT EXISTS field_role_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    state VARCHAR(20) NOT NULL CHECK (state IN ('required', 'hidden', 'read_only')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (field_id, role_id)
+);
+
+-- Simple per-field validators. One row per rule (not one row with many
+-- nullable columns) so a field can have several rules, and a new rule_type
+-- doesn't require a schema change.
+CREATE TABLE IF NOT EXISTS field_validation_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    rule_type VARCHAR(20) NOT NULL CHECK (rule_type IN (
+        'min_length', 'max_length', 'email', 'required',
+        'number_gt', 'number_lt', 'number_gte', 'number_lte', 'number_eq', 'pattern'
+    )),
+    rule_value VARCHAR(255),  -- threshold, stored as text and cast per rule_type; null for email/required
+    error_message VARCHAR(500),  -- overrides the client's generic message when set
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Static dropdown values. One shared table indexed on field_id rather than
+-- one table per dropdown field — see context/work/0010, "Options considered".
+CREATE TABLE IF NOT EXISTS field_options (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    code VARCHAR(100) NOT NULL,  -- the value actually stored when this option is picked
+    value VARCHAR(255) NOT NULL,  -- the display label
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT true,  -- soft-disable without deleting; preserves history on records that already used it
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (field_id, code)
+);
+
+-- ============================================================================
 -- EXPENSE MANAGEMENT TABLES (v3.0 enhanced)
 -- ============================================================================
 
@@ -837,6 +917,15 @@ CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id
 CREATE INDEX IF NOT EXISTS idx_role_permissions_permission ON role_permissions(permission_id);
 CREATE INDEX IF NOT EXISTS idx_permissions_category ON permissions(category);
 CREATE INDEX IF NOT EXISTS idx_permissions_name ON permissions(name);
+
+-- Form designer indexes
+-- form_definitions.screen_id, field_definitions(form_id, field_key),
+-- field_role_rules(field_id, role_id), and field_options(field_id, code) are
+-- already indexed via their UNIQUE constraints above (form_id/field_id are
+-- the leftmost column, so those indexes also serve lookups by that column
+-- alone) — only add indexes here for columns not already covered.
+CREATE INDEX IF NOT EXISTS idx_field_role_rules_role_id ON field_role_rules(role_id);
+CREATE INDEX IF NOT EXISTS idx_field_validation_rules_field_id ON field_validation_rules(field_id);
 
 -- Department indexes
 CREATE INDEX IF NOT EXISTS idx_departments_parent ON departments(parent_id);
@@ -1488,7 +1577,11 @@ INSERT INTO permissions (name, description, category, risk_level) VALUES
 ('llm.template.view', 'View LLM prompt templates', 'llm', 'low'),
 ('llm.template.create', 'Create LLM prompt templates', 'llm', 'high'),
 ('llm.template.edit', 'Edit LLM prompt templates', 'llm', 'high'),
-('llm.template.delete', 'Delete LLM prompt templates', 'llm', 'critical')
+('llm.template.delete', 'Delete LLM prompt templates', 'llm', 'critical'),
+-- Form Designer (WORK-0010)
+('form.view', 'View form designer definitions, fields, and rules', 'form', 'low'),
+('form.manage', 'Create and edit form designer fields, role rules, validation rules, and options', 'form', 'medium'),
+('form.publish', 'Publish a form definition, making it live for the expense app', 'form', 'high')
 ON CONFLICT (name) DO NOTHING;
 
 -- ============================================================================
@@ -1582,6 +1675,11 @@ WHERE r.name = 'auditor' AND p.name IN (
 ON CONFLICT DO NOTHING;
 
 -- Admin role permissions (most permissions except critical ones)
+-- Note: this is a denylist, not an allowlist — new permissions (e.g.
+-- form.view/form.manage/form.publish, WORK-0010) flow to 'admin'
+-- automatically unless added to the NOT IN list below, and to
+-- 'super_admin' automatically via the catch-all below that. No explicit
+-- grant was needed for the form designer permissions.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'admin' AND p.name NOT IN (
