@@ -145,7 +145,7 @@ export interface UpdateExpenseLineInput {
   description?: string;
   amount?: number;
   currency?: string;
-  categoryCode?: string;
+  categoryCode?: string | null;
   transactionDate?: string;
   merchantName?: string;
   locationCity?: string;
