@@ -1,7 +1,7 @@
 ---
 id: 0015
 title: "Custom field value storage for expense lines & reports"
-status: building
+status: shipped
 kind: feature
 opened: 2026-08-15
 decided: 2026-08-15
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-15 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -134,6 +134,10 @@ WORK-0012 — fail loud, don't silently drop). The existing
   new tables only reference `expense_lines`/`expense_reports`/
   `field_definitions`, none of which need WORK-0014's `is_locked`/
   `field_platform_rules` additions to function.
+- 2026-08-15 shipped — merged to `main` (PR #6), confirmed with
+  `git merge-base --is-ancestor` and a content grep for
+  `expense_line_field_values` on `origin/main`, not just the PR's
+  "Merged" label.
 
 ---
 
