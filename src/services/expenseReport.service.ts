@@ -1,14 +1,91 @@
 import { db } from '../db/drizzle.js';
-import { expenseReports, expenseLines, users, userRoles, rolePermissions, permissions } from '../db/schema.js';
+import { expenseReports, expenseLines, users, userRoles, rolePermissions, permissions, expenseReportFieldValues } from '../db/schema.js';
 import type { ExpenseReport } from '../db/schema.js';
-import { NotFoundError, ForbiddenError } from '../types/index.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../types/index.js';
+import { query } from '../db/client.js';
 import {
-  eq, and, or, ilike, asc, desc, count, gt, isNull, sql, sum, type SQL,
+  eq, and, or, ilike, asc, desc, count, gt, isNull, inArray, sql, sum, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 import { canAccessReport } from './approval.service.js';
 
 export type { ExpenseReport };
+export type ExpenseReportWithCustomFields = ExpenseReport & { customFields: Record<string, string | number | boolean> };
+
+// WORK-0015: same pattern as expenseLine.service.ts's custom-field helpers —
+// see the comment there for the raw-SQL-for-form-designer-tables rationale.
+interface ReportCustomFieldDef {
+  id: string;
+  field_type: string;
+}
+
+async function getReportCustomFieldDefsByKey(): Promise<Map<string, ReportCustomFieldDef>> {
+  const result = await query<ReportCustomFieldDef & { field_key: string }>(
+    `SELECT fd.id, fd.field_key, fd.field_type
+     FROM field_definitions fd
+     JOIN form_definitions f ON f.id = fd.form_id
+     WHERE f.screen_id = 'expense_report' AND f.status = 'published' AND fd.is_system_defined = false`
+  );
+  return new Map(result.rows.map((r) => [r.field_key, { id: r.id, field_type: r.field_type }]));
+}
+
+function coerceReportCustomFieldValue(fieldType: string, raw: string): string | number | boolean {
+  if (fieldType === 'decimal') return Number(raw);
+  if (fieldType === 'toggle') return raw === 'true';
+  return raw;
+}
+
+async function setExpenseReportCustomFields(
+  reportId: string,
+  customFields: Record<string, string | number | boolean>
+): Promise<void> {
+  const defsByKey = await getReportCustomFieldDefsByKey();
+  const unknown = Object.keys(customFields).filter((k) => !defsByKey.has(k));
+  if (unknown.length > 0) {
+    throw new ValidationError(`Unknown or non-custom field(s) on expense_report: ${unknown.join(', ')}`);
+  }
+
+  await db.delete(expenseReportFieldValues).where(eq(expenseReportFieldValues.expenseReportId, reportId));
+  const entries = Object.entries(customFields);
+  if (entries.length === 0) return;
+
+  await db.insert(expenseReportFieldValues).values(
+    entries.map(([key, value]) => ({
+      expenseReportId: reportId,
+      fieldId: defsByKey.get(key)!.id,
+      value: String(value),
+    }))
+  );
+}
+
+async function getCustomFieldsForReports(
+  reportIds: string[]
+): Promise<Map<string, Record<string, string | number | boolean>>> {
+  const result = new Map<string, Record<string, string | number | boolean>>();
+  if (reportIds.length === 0) return result;
+
+  const rows = await db
+    .select({ expenseReportId: expenseReportFieldValues.expenseReportId, value: expenseReportFieldValues.value, fieldId: expenseReportFieldValues.fieldId })
+    .from(expenseReportFieldValues)
+    .where(inArray(expenseReportFieldValues.expenseReportId, reportIds));
+  if (rows.length === 0) return result;
+
+  const fieldIds = [...new Set(rows.map((r) => r.fieldId))];
+  const defsResult = await query<{ id: string; field_key: string; field_type: string }>(
+    `SELECT id, field_key, field_type FROM field_definitions WHERE id = ANY($1)`,
+    [fieldIds]
+  );
+  const defsById = new Map(defsResult.rows.map((d) => [d.id, d]));
+
+  for (const row of rows) {
+    const def = defsById.get(row.fieldId);
+    if (!def || row.value === null) continue;
+    const existing = result.get(row.expenseReportId) ?? {};
+    existing[def.field_key] = coerceReportCustomFieldValue(def.field_type, row.value);
+    result.set(row.expenseReportId, existing);
+  }
+  return result;
+}
 
 /**
  * Coerce all numeric/decimal fields that pg returns as strings to JS numbers,
@@ -50,6 +127,7 @@ export interface CreateExpenseReportInput {
   submissionComment?: string | null;
   exchangeRate?: number | null;
   baseCurrencyTotal?: number | null;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export interface UpdateExpenseReportInput {
@@ -70,12 +148,13 @@ export interface UpdateExpenseReportInput {
   paidBy?: string | null;
   exchangeRate?: number | null;
   baseCurrencyTotal?: number | null;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export async function createExpenseReport(
   userId: string,
   input: CreateExpenseReportInput
-): Promise<ExpenseReport> {
+): Promise<ExpenseReportWithCustomFields> {
   // Idempotent create
   if (input.clientId) {
     const [existing] = await db
@@ -83,7 +162,10 @@ export async function createExpenseReport(
       .from(expenseReports)
       .where(eq(expenseReports.clientId, input.clientId))
       .limit(1);
-    if (existing) return existing;
+    if (existing) {
+      const customFieldsByReport = await getCustomFieldsForReports([existing.id]);
+      return { ...existing, customFields: customFieldsByReport.get(existing.id) ?? {} };
+    }
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -108,14 +190,17 @@ export async function createExpenseReport(
     })
     .returning();
 
-  return toResponse(result, 0);
+  if (input.customFields) {
+    await setExpenseReportCustomFields(result.id, input.customFields);
+  }
+  return { ...toResponse(result, 0), customFields: input.customFields ?? {} };
 }
 
 export async function getExpenseReportById(
   reportId: string,
   userId: string,
   permissions_: string[] = []
-): Promise<ExpenseReport> {
+): Promise<ExpenseReportWithCustomFields> {
   const [report] = await db
     .select()
     .from(expenseReports)
@@ -138,7 +223,8 @@ export async function getExpenseReportById(
   }
 
   const computedTotal = await computeTotal(reportId);
-  return toResponse(report, computedTotal);
+  const customFieldsByReport = await getCustomFieldsForReports([report.id]);
+  return { ...toResponse(report, computedTotal), customFields: customFieldsByReport.get(report.id) ?? {} };
 }
 
 export async function listExpenseReports(
@@ -146,7 +232,7 @@ export async function listExpenseReports(
   params: PaginationParams,
   status?: string,
   updatedSince?: string
-): Promise<{ reports: ExpenseReport[]; total: number }> {
+): Promise<{ reports: ExpenseReportWithCustomFields[]; total: number }> {
   const isIncrementalSync = !!updatedSince;
 
   const conditions: (SQL | undefined)[] = [eq(expenseReports.userId, userId)];
@@ -208,7 +294,8 @@ export async function listExpenseReports(
     : [];
 
   const totalsMap = new Map(totalsByReport.map((r) => [r.reportId, Number(r.total ?? 0)]));
-  const reports = rows.map((r) => toResponse(r, totalsMap.get(r.id) ?? 0));
+  const customFieldsByReport = await getCustomFieldsForReports(reportIds);
+  const reports = rows.map((r) => ({ ...toResponse(r, totalsMap.get(r.id) ?? 0), customFields: customFieldsByReport.get(r.id) ?? {} }));
 
   return { reports, total };
 }
@@ -238,7 +325,7 @@ export async function updateExpenseReport(
   userId: string,
   input: UpdateExpenseReportInput,
   permissions_: string[] = []
-): Promise<ExpenseReport> {
+): Promise<ExpenseReportWithCustomFields> {
   await getExpenseReportById(reportId, userId, permissions_);
 
   const updates: Partial<typeof expenseReports.$inferInsert> = {};
@@ -260,6 +347,10 @@ export async function updateExpenseReport(
   if (input.exchangeRate !== undefined) updates.exchangeRate = input.exchangeRate;
   if (input.baseCurrencyTotal !== undefined) updates.baseCurrencyTotal = input.baseCurrencyTotal;
 
+  if (input.customFields !== undefined) {
+    await setExpenseReportCustomFields(reportId, input.customFields);
+  }
+
   if (Object.keys(updates).length === 0) {
     return getExpenseReportById(reportId, userId, permissions_);
   }
@@ -273,7 +364,8 @@ export async function updateExpenseReport(
     computeTotal(reportId),
   ]);
 
-  return toResponse(result, computedTotal);
+  const customFieldsByReport = await getCustomFieldsForReports([result.id]);
+  return { ...toResponse(result, computedTotal), customFields: customFieldsByReport.get(result.id) ?? {} };
 }
 
 export async function deleteExpenseReport(

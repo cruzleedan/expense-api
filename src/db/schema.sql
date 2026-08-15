@@ -378,6 +378,19 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     deleted_at TIMESTAMP WITH TIME ZONE  -- NULL = active; set for soft deletes
 );
 
+-- WORK-0015: same shape/reasoning as expense_line_field_values above, keyed
+-- on expense_report_id instead. Two tables, not one polymorphic table — see
+-- context/work/0015, "Options considered".
+CREATE TABLE IF NOT EXISTS expense_report_field_values (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    expense_report_id UUID NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE,
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    value TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (expense_report_id, field_id)
+);
+
 -- Approval history for each report
 CREATE TABLE IF NOT EXISTS approval_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -487,6 +500,23 @@ CREATE TABLE IF NOT EXISTS expense_lines (
     is_weekend BOOLEAN GENERATED ALWAYS AS (EXTRACT(DOW FROM transaction_date) IN (0, 6)) STORED,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- WORK-0015: values for admin-added custom fields (form designer,
+-- context/work/0010) on an expense line. Stored as TEXT regardless of the
+-- field's field_type — parsed against the field's current type on read,
+-- same "trust the field definition" posture field_options already takes.
+-- ON DELETE CASCADE on field_id means deleting a non-system custom field
+-- (deleteField already refuses to delete is_system_defined ones) silently
+-- drops every value recorded against it — accepted, see context/work/0015.
+CREATE TABLE IF NOT EXISTS expense_line_field_values (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    expense_line_id UUID NOT NULL REFERENCES expense_lines(id) ON DELETE CASCADE,
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    value TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (expense_line_id, field_id)
 );
 
 -- Receipts (v4.0 with OCR and semantic search)

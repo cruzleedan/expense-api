@@ -40,6 +40,8 @@ export const ExpenseReportSchema = z.object({
   createdAt: datetimeField,
   updatedAt: datetimeField,
   deletedAt: datetimeFieldNullable,
+  // WORK-0015: admin-added custom fields (form designer), keyed by fieldKey.
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
 }).openapi('ExpenseReport');
 
 export const CreateExpenseReportSchema = z.object({
@@ -65,6 +67,9 @@ export const CreateExpenseReportSchema = z.object({
     example: ['661f9511-f3ac-52e5-b827-557766551111'],
     description: 'Optional list of orphaned expense line IDs to attach to this report on creation',
   }),
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().openapi({
+    description: 'Values for admin-added custom fields on the expense_report form, keyed by fieldKey. Unknown or system-defined keys are rejected with 400.',
+  }),
 }).openapi('CreateExpenseReport');
 
 export const UpdateExpenseReportSchema = z.object({
@@ -86,6 +91,9 @@ export const UpdateExpenseReportSchema = z.object({
   paidBy: z.string().max(255).nullable().optional(),
   exchangeRate: z.number().positive().nullable().optional(),
   baseCurrencyTotal: z.number().nullable().optional(),
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().openapi({
+    description: 'Replaces the full set of custom field values when provided. Unknown or system-defined keys are rejected with 400.',
+  }),
 }).openapi('UpdateExpenseReport');
 
 // Allowed sortBy values for expense reports
