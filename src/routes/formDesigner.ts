@@ -11,6 +11,7 @@ import {
   updateField,
   deleteField,
   replaceFieldRoleRules,
+  replaceFieldPlatformRules,
   replaceFieldValidationRules,
   replaceFieldOptions,
 } from '../services/formDesigner.service.js';
@@ -24,11 +25,13 @@ import {
   FieldIdParamSchema,
   FieldDefinitionSchema,
   FieldRoleRuleSchema,
+  FieldPlatformRuleSchema,
   FieldValidationRuleSchema,
   FieldOptionSchema,
   CreateFieldRequestSchema,
   UpdateFieldRequestSchema,
   ReplaceRoleRulesRequestSchema,
+  ReplacePlatformRulesRequestSchema,
   ReplaceValidationRulesRequestSchema,
   ReplaceOptionsRequestSchema,
 } from '../schemas/formDesigner.js';
@@ -277,6 +280,38 @@ const replaceRoleRulesHandler: RouteHandler<typeof replaceRoleRulesRoute> = asyn
   return c.json(result as any, 200);
 };
 formDesignerRouter.openapi(replaceRoleRulesRoute, replaceRoleRulesHandler);
+
+// ============================================================================
+// PUT /v1/admin/fields/{fieldId}/platforms — replace the hidden-platform set
+// ============================================================================
+
+const replacePlatformRulesRoute = createRoute({
+  method: 'put',
+  path: '/fields/{fieldId}/platforms',
+  tags: ['Form Designer'],
+  summary: 'Replace platform visibility',
+  description: 'Replace the full set of platforms this field is hidden on. Omit a platform (or send an empty hiddenOn) to make it visible everywhere.',
+  security,
+  middleware: [requirePermission('form.manage')] as const,
+  request: {
+    params: FieldIdParamSchema,
+    headers: AuthHeaderSchema,
+    body: { content: { 'application/json': { schema: ReplacePlatformRulesRequestSchema } } },
+  },
+  responses: {
+    200: { description: 'Platform rules replaced', content: { 'application/json': { schema: z.array(FieldPlatformRuleSchema) } } },
+    400: { description: 'Duplicate or unknown platform', content: { 'application/json': { schema: ErrorSchema } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const replacePlatformRulesHandler: RouteHandler<typeof replacePlatformRulesRoute> = async (c) => {
+  const { fieldId } = c.req.valid('param');
+  const { hiddenOn } = c.req.valid('json');
+  const result = await replaceFieldPlatformRules(fieldId, hiddenOn);
+  return c.json(result as any, 200);
+};
+formDesignerRouter.openapi(replacePlatformRulesRoute, replacePlatformRulesHandler);
 
 // ============================================================================
 // PUT /v1/admin/fields/{fieldId}/validation-rules — replace the full set
