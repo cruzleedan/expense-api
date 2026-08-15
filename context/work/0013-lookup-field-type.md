@@ -1,7 +1,7 @@
 ---
 id: 0013
 title: "Split dropdown into static-only, add a lookup field type"
-status: building
+status: shipped
 kind: fix
 opened: 2026-08-15
 decided: 2026-08-15
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-15 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | fix |
 | **Supersedes** | 0011 |
 | **Superseded by** | — |
@@ -152,6 +152,11 @@ every other Flutter follow-up in the original handoff doc.
   the published read endpoint's actual output and confirmed it's
   byte-for-byte the same shape as before this change, for both a `lookup`
   and a real `dropdown` field).
+- 2026-08-15 shipped — merged to `main` (PR #3), confirmed with
+  `git merge-base --is-ancestor` against `origin/main` rather than trusting
+  the PR's "Merged" label alone (worth doing every time, not just when a
+  merge-order gap is suspected — see WORK-0013/0011 history in
+  expense-tracker for what trusting the label alone missed once already).
 
 ---
 
