@@ -38,18 +38,18 @@ async function computeTotal(reportId: string): Promise<number> {
 export interface CreateExpenseReportInput {
   clientId?: string;
   title: string;
-  description?: string;
+  description?: string | null;
   reportDate?: string;
   totalAmount?: number;
   netAmount?: number;
   currency?: string;
-  projectId?: string;
-  projectName?: string;
-  clientName?: string;
-  tags?: string[];
-  submissionComment?: string;
-  exchangeRate?: number;
-  baseCurrencyTotal?: number;
+  projectId?: string | null;
+  projectName?: string | null;
+  clientName?: string | null;
+  tags?: string[] | null;
+  submissionComment?: string | null;
+  exchangeRate?: number | null;
+  baseCurrencyTotal?: number | null;
 }
 
 export interface UpdateExpenseReportInput {

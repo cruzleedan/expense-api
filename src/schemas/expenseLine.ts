@@ -1,6 +1,15 @@
 import { z } from '@hono/zod-openapi';
 import { PaginationMetaSchema } from './common.js';
 
+// pg returns NUMERIC/DECIMAL columns as strings; coerce to number at the boundary
+// (same pattern as schemas/expenseReport.ts — keep the two in sync if this ever moves to a shared helper)
+const numericField = z.coerce.number();
+const numericFieldNullable = z.coerce.number().nullable();
+// Normalize pg timestamps ("2026-03-22 09:47:23.412843+00") to valid ISO 8601 UTC strings
+const toISO = (v: string) => new Date(v).toISOString();
+const datetimeField = z.string().transform(toISO);
+const datetimeFieldNullable = z.string().transform(toISO).nullable();
+
 export const ExpenseLineSchema = z.object({
   id: z.string().uuid(),
   reportId: z.string().uuid().nullable(),
@@ -8,26 +17,27 @@ export const ExpenseLineSchema = z.object({
   clientId: z.string().max(36).nullable(),
   version: z.number().int(),
   description: z.string(),
-  amount: z.number(),
+  amount: numericField,
   currency: z.string(),
   category: z.string().nullable(),
   categoryCode: z.string().nullable(),
-  expenseDate: z.string(),
+  transactionDate: z.string(),
   // v5.0 fields
   merchantName: z.string().nullable(),
   locationCity: z.string().nullable(),
   locationCountry: z.string().nullable(),
   paymentMethod: z.string().nullable(),
-  originalAmount: z.number().nullable(),
+  originalAmount: numericFieldNullable,
   originalCurrency: z.string().nullable(),
+  exchangeRate: numericFieldNullable,
   isBusinessExpense: z.boolean(),
   isReimbursable: z.boolean(),
   reimbursementStatus: z.string(),
-  taxAmount: z.number().nullable(),
-  taxRate: z.number().nullable(),
+  taxAmount: numericFieldNullable,
+  taxRate: numericFieldNullable,
   notes: z.string().nullable(),
-  latitude: z.number().nullable(),
-  longitude: z.number().nullable(),
+  latitude: numericFieldNullable,
+  longitude: numericFieldNullable,
   projectId: z.string().uuid().nullable(),
   projectName: z.string().nullable(),
   clientName: z.string().nullable(),
@@ -36,11 +46,11 @@ export const ExpenseLineSchema = z.object({
   recurrencePattern: z.string().nullable(),
   recurrenceMerchant: z.string().nullable(),
   isAnomaly: z.boolean(),
-  anomalyScore: z.number().nullable(),
+  anomalyScore: numericFieldNullable,
   anomalyReasons: z.array(z.string()).nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  deletedAt: z.string().datetime().nullable(),
+  createdAt: datetimeField,
+  updatedAt: datetimeField,
+  deletedAt: datetimeFieldNullable,
 }).openapi('ExpenseLine');
 
 export const CreateExpenseLineSchema = z.object({
@@ -60,6 +70,7 @@ export const CreateExpenseLineSchema = z.object({
   paymentMethod: z.enum(['corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other']).optional().openapi({ example: 'corporate_card' }),
   originalAmount: z.number().min(0).optional().openapi({ example: 450.00 }),
   originalCurrency: z.string().length(3).optional().openapi({ example: 'EUR' }),
+  exchangeRate: z.number().positive().optional().openapi({ example: 1.08 }),
   isBusinessExpense: z.boolean().optional().openapi({ example: true }),
   isReimbursable: z.boolean().optional().openapi({ example: false }),
   reimbursementStatus: z.enum(['not_applicable', 'pending', 'submitted', 'approved', 'rejected', 'paid']).optional().openapi({ example: 'not_applicable' }),
@@ -93,6 +104,7 @@ export const UpdateExpenseLineSchema = z.object({
   paymentMethod: z.enum(['corporate_card', 'personal_card', 'cash', 'bank_transfer', 'mobile_pay', 'other']).nullable().optional(),
   originalAmount: z.number().min(0).nullable().optional(),
   originalCurrency: z.string().length(3).nullable().optional(),
+  exchangeRate: z.number().positive().nullable().optional(),
   isBusinessExpense: z.boolean().optional(),
   isReimbursable: z.boolean().optional(),
   reimbursementStatus: z.enum(['not_applicable', 'pending', 'submitted', 'approved', 'rejected', 'paid']).nullable().optional(),

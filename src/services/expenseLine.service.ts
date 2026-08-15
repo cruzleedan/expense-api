@@ -1,13 +1,27 @@
 import { db } from '../db/drizzle.js';
-import { expenseLines, expenseReports, receipts, receiptLineAssociations } from '../db/schema.js';
+import { expenseLines, expenseReports, expenseCategories, receipts, receiptLineAssociations } from '../db/schema.js';
 import type { ExpenseLine } from '../db/schema.js';
-import { NotFoundError, ForbiddenError } from '../types/index.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
 import { logger } from '../utils/logger.js';
 import {
   eq, and, or, ilike, asc, desc, count, gt, isNull, isNotNull, sql, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
+
+async function assertCategoryCodeExists(categoryCode: string | null | undefined): Promise<void> {
+  if (!categoryCode) return;
+
+  const [category] = await db
+    .select({ id: expenseCategories.id })
+    .from(expenseCategories)
+    .where(eq(expenseCategories.code, categoryCode))
+    .limit(1);
+
+  if (!category) {
+    throw new ValidationError(`Unknown category code "${categoryCode}"`);
+  }
+}
 
 export type { ExpenseLine };
 
@@ -24,6 +38,7 @@ export interface CreateExpenseLineInput {
   paymentMethod?: string;
   originalAmount?: number;
   originalCurrency?: string;
+  exchangeRate?: number;
   isBusinessExpense?: boolean;
   isReimbursable?: boolean;
   reimbursementStatus?: string;
@@ -54,6 +69,7 @@ export interface UpdateExpenseLineInput {
   paymentMethod?: string;
   originalAmount?: number;
   originalCurrency?: string;
+  exchangeRate?: number;
   isBusinessExpense?: boolean;
   isReimbursable?: boolean;
   reimbursementStatus?: string;
@@ -79,6 +95,7 @@ export async function createExpenseLine(
   if (reportId) {
     await verifyReportOwnership(reportId, userId);
   }
+  await assertCategoryCodeExists(input.categoryCode);
 
   // Idempotent create
   if (input.clientId) {
@@ -108,6 +125,7 @@ export async function createExpenseLine(
       paymentMethod: input.paymentMethod ?? null,
       originalAmount: input.originalAmount ?? null,
       originalCurrency: input.originalCurrency ?? null,
+      exchangeRate: input.exchangeRate ?? null,
       isBusinessExpense: input.isBusinessExpense ?? false,
       isReimbursable: input.isReimbursable ?? false,
       reimbursementStatus: input.reimbursementStatus ?? 'not_applicable',
@@ -233,7 +251,10 @@ export async function updateExpenseLine(
   if (input.description !== undefined) updates.description = input.description;
   if (input.amount !== undefined) updates.amount = input.amount ?? 0;
   if (input.currency !== undefined) updates.currency = input.currency;
-  if (input.categoryCode !== undefined) updates.categoryCode = input.categoryCode;
+  if (input.categoryCode !== undefined) {
+    await assertCategoryCodeExists(input.categoryCode);
+    updates.categoryCode = input.categoryCode;
+  }
   if (input.transactionDate !== undefined) updates.expenseDate = input.transactionDate;
   if (input.merchantName !== undefined) updates.merchantName = input.merchantName;
   if (input.locationCity !== undefined) updates.locationCity = input.locationCity;
@@ -241,6 +262,7 @@ export async function updateExpenseLine(
   if (input.paymentMethod !== undefined) updates.paymentMethod = input.paymentMethod;
   if (input.originalAmount !== undefined) updates.originalAmount = input.originalAmount;
   if (input.originalCurrency !== undefined) updates.originalCurrency = input.originalCurrency;
+  if (input.exchangeRate !== undefined) updates.exchangeRate = input.exchangeRate;
   if (input.isBusinessExpense !== undefined) updates.isBusinessExpense = input.isBusinessExpense;
   if (input.isReimbursable !== undefined) updates.isReimbursable = input.isReimbursable;
   if (input.reimbursementStatus !== undefined) updates.reimbursementStatus = input.reimbursementStatus;
@@ -509,6 +531,17 @@ export async function bulkCreateExpenseLines(
         if (line.description.length > 200) {
           failed.push({ index: i, error: 'Description exceeds 200 characters' });
           continue;
+        }
+        if (line.categoryCode) {
+          const [category] = await tx
+            .select({ id: expenseCategories.id })
+            .from(expenseCategories)
+            .where(eq(expenseCategories.code, line.categoryCode))
+            .limit(1);
+          if (!category) {
+            failed.push({ index: i, error: `Unknown category code "${line.categoryCode}"` });
+            continue;
+          }
         }
 
         const [createdLine] = await tx
