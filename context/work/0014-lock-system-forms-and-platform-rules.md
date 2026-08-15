@@ -1,7 +1,7 @@
 ---
 id: 0014
 title: "Seed and lock the two system forms; add per-field platform availability"
-status: building
+status: shipped
 kind: feature
 opened: 2026-08-15
 decided: 2026-08-15
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-15 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -144,6 +144,10 @@ opts in, same wire-compatibility discipline as WORK-0013's `lookup` shim.
   already-shipped WORK-0010 derivation logic, matching the known gap
   flagged in this doc's Problem/seed-comment — not fixed here, tracked for
   expense-tracker WORK-0016.
+- 2026-08-15 shipped — merged to `main` (PR #5), confirmed with
+  `git merge-base --is-ancestor` against `origin/main` and a content grep
+  for `is_locked`/`field_platform_rules`/`expense_line_field_values` on
+  `origin/main`'s `schema.sql`, not just the PR's "Merged" label.
 
 ---
 
