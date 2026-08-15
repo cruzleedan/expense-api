@@ -37,8 +37,8 @@ const getUiSchemaRoute = createRoute({
 
 const getUiSchemaHandler: RouteHandler<typeof getUiSchemaRoute> = async (c) => {
   const { screenId } = c.req.valid('param');
-  const { role } = c.req.valid('query');
-  const schema = await getUiSchema(screenId, role);
+  const { role, platform } = c.req.valid('query');
+  const schema = await getUiSchema(screenId, role, platform);
   return c.json(schema, 200);
 };
 uiSchemasRouter.openapi(getUiSchemaRoute, getUiSchemaHandler);

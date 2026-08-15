@@ -232,9 +232,18 @@ CREATE TABLE IF NOT EXISTS form_definitions (
     name VARCHAR(255) NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+    -- WORK-0014: true for the two seeded system forms (expense_line,
+    -- expense_report). No delete/rename endpoint exists for forms at all
+    -- today, so this has nothing to enforce yet — added now so whoever
+    -- eventually builds one has a flag to check rather than a migration to write.
+    is_locked BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- WORK-0014 migration: add is_locked to a form_definitions table created
+-- before this column existed. No-op once already migrated.
+ALTER TABLE form_definitions ADD COLUMN IF NOT EXISTS is_locked BOOLEAN NOT NULL DEFAULT false;
 
 -- One row per field on a form
 CREATE TABLE IF NOT EXISTS field_definitions (
@@ -301,6 +310,19 @@ CREATE TABLE IF NOT EXISTS field_validation_rules (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- WORK-0014: per-field, per-platform visibility. A row's mere presence
+-- means "hidden on this platform" — there's only one deviation to express
+-- here (unlike field_role_rules, which also needs required/read_only), so
+-- no state column. No row for a (field, platform) pair = visible on that
+-- platform — same absence-is-default convention field_role_rules uses.
+CREATE TABLE IF NOT EXISTS field_platform_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    field_id UUID NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE,
+    platform VARCHAR(20) NOT NULL CHECK (platform IN ('mobile', 'web', 'mcp')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (field_id, platform)
 );
 
 -- Static dropdown values. One shared table indexed on field_id rather than
@@ -1935,3 +1957,64 @@ Be concise, data-driven, and actionable. When referencing amounts, always use do
  ARRAY['expense_context', 'semantic_context'], 'text', 2048, 0.4)
 
 ON CONFLICT (name) DO NOTHING;
+
+-- ============================================================================
+-- SEED DATA: FORM DESIGNER SYSTEM FORMS (WORK-0014)
+-- ============================================================================
+-- The two real forms in this system, pre-seeded and locked so the form
+-- designer's "create a form" flow stays available for future use without
+-- being how these two are made. Fields are seeded is_system_defined = true,
+-- field-for-field matching what expense-tracker's CreateExpenseLineModal /
+-- ExpenseLinesTable and the report entry UI actually render today — see
+-- context/work/0014-lock-system-forms-and-platform-rules.md.
+--
+-- Known gap, not fixed here: getUiSchema() (WORK-0010) derives
+-- required = true for every is_system_defined field with no per-field
+-- override. That's correct for description/amount/transactionDate/currency/
+-- title/reportDate, but categoryCode and the report's description are
+-- optional in the current UI. Seeding them as system-defined anyway (they
+-- structurally are — categoryCode needs the lookup compatibility shim,
+-- neither should be deletable) means their wire `required` will read true
+-- once something actually consumes this endpoint. No live consumer reads
+-- this yet, so nothing observable breaks today — but expense-tracker
+-- WORK-0016 (making the web app itself schema-driven) needs to either
+-- special-case this or extend required-derivation with a real override
+-- before it can claim byte-for-byte behavior parity with today's UI.
+
+INSERT INTO form_definitions (screen_id, name, status, is_locked) VALUES
+    ('expense_line', 'Expense Line', 'published', true),
+    ('expense_report', 'Expense Report', 'published', true)
+ON CONFLICT (screen_id) DO NOTHING;
+
+INSERT INTO field_definitions (form_id, field_key, field_type, label, is_system_defined, sort_order, lookup_source)
+SELECT id, 'description', 'text', 'Description', true, 0, NULL FROM form_definitions WHERE screen_id = 'expense_line'
+UNION ALL
+SELECT id, 'amount', 'decimal', 'Amount', true, 1, NULL FROM form_definitions WHERE screen_id = 'expense_line'
+UNION ALL
+SELECT id, 'transactionDate', 'date', 'Date', true, 2, NULL FROM form_definitions WHERE screen_id = 'expense_line'
+UNION ALL
+SELECT id, 'categoryCode', 'lookup', 'Category', true, 3, 'local:category' FROM form_definitions WHERE screen_id = 'expense_line'
+UNION ALL
+SELECT id, 'currency', 'dropdown', 'Currency', true, 4, NULL FROM form_definitions WHERE screen_id = 'expense_line'
+UNION ALL
+SELECT id, 'title', 'text', 'Title', true, 0, NULL FROM form_definitions WHERE screen_id = 'expense_report'
+UNION ALL
+SELECT id, 'description', 'text', 'Description', true, 1, NULL FROM form_definitions WHERE screen_id = 'expense_report'
+UNION ALL
+SELECT id, 'reportDate', 'date', 'Report Date', true, 2, NULL FROM form_definitions WHERE screen_id = 'expense_report'
+ON CONFLICT (form_id, field_key) DO NOTHING;
+
+-- Static currency options for expense_line's currency field, matching
+-- ExpenseLinesTable.tsx's hardcoded list exactly.
+INSERT INTO field_options (field_id, code, value, sort_order)
+SELECT fd.id, opt.code, opt.value, opt.sort_order
+FROM field_definitions fd
+JOIN form_definitions form ON form.id = fd.form_id AND form.screen_id = 'expense_line'
+CROSS JOIN (VALUES
+    ('USD', 'USD', 0),
+    ('EUR', 'EUR', 1),
+    ('GBP', 'GBP', 2),
+    ('CAD', 'CAD', 3)
+) AS opt(code, value, sort_order)
+WHERE fd.field_key = 'currency'
+ON CONFLICT (field_id, code) DO NOTHING;

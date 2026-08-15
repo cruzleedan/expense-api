@@ -15,6 +15,7 @@ import {
 export type FieldType = 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle' | 'lookup';
 export type FormStatus = 'draft' | 'published';
 export type RoleRuleState = 'required' | 'hidden' | 'read_only';
+export type Platform = 'mobile' | 'web' | 'mcp';
 export type ValidationRuleType =
   | 'min_length' | 'max_length' | 'email' | 'required'
   | 'number_gt' | 'number_lt' | 'number_gte' | 'number_lte' | 'number_eq' | 'pattern';
@@ -25,6 +26,7 @@ export interface FormDefinition {
   name: string;
   version: number;
   status: FormStatus;
+  is_locked: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -53,6 +55,12 @@ export interface FieldRoleRule {
   state: RoleRuleState;
 }
 
+export interface FieldPlatformRule {
+  id: string;
+  field_id: string;
+  platform: Platform;
+}
+
 export interface FieldValidationRule {
   id: string;
   field_id: string;
@@ -73,6 +81,7 @@ export interface FieldOption {
 
 export interface FieldDefinitionWithRules extends FieldDefinition {
   role_rules: FieldRoleRule[];
+  platform_rules: FieldPlatformRule[];
   validation_rules: FieldValidationRule[];
   options: FieldOption[];
 }
@@ -158,8 +167,9 @@ export async function getFormDetail(formId: string): Promise<FormDefinition & { 
     return { ...form, fields: [] };
   }
 
-  const [roleRulesResult, validationRulesResult, optionsResult] = await Promise.all([
+  const [roleRulesResult, platformRulesResult, validationRulesResult, optionsResult] = await Promise.all([
     query<FieldRoleRule>('SELECT * FROM field_role_rules WHERE field_id = ANY($1)', [fieldIds]),
+    query<FieldPlatformRule>('SELECT * FROM field_platform_rules WHERE field_id = ANY($1)', [fieldIds]),
     query<FieldValidationRule>('SELECT * FROM field_validation_rules WHERE field_id = ANY($1) ORDER BY sort_order ASC', [fieldIds]),
     query<FieldOption>('SELECT * FROM field_options WHERE field_id = ANY($1) ORDER BY sort_order ASC', [fieldIds]),
   ]);
@@ -175,6 +185,7 @@ export async function getFormDetail(formId: string): Promise<FormDefinition & { 
   };
 
   const roleRulesByField = byField(roleRulesResult.rows);
+  const platformRulesByField = byField(platformRulesResult.rows);
   const validationRulesByField = byField(validationRulesResult.rows);
   const optionsByField = byField(optionsResult.rows);
 
@@ -183,6 +194,7 @@ export async function getFormDetail(formId: string): Promise<FormDefinition & { 
     fields: fields.map((field) => ({
       ...field,
       role_rules: roleRulesByField.get(field.id) ?? [],
+      platform_rules: platformRulesByField.get(field.id) ?? [],
       validation_rules: validationRulesByField.get(field.id) ?? [],
       options: optionsByField.get(field.id) ?? [],
     })),
@@ -388,6 +400,42 @@ export async function replaceFieldRoleRules(fieldId: string, rules: RoleRuleInpu
 }
 
 // ============================================================================
+// Platform rules
+// ============================================================================
+
+const ALL_PLATFORMS: Platform[] = ['mobile', 'web', 'mcp'];
+
+// A row's mere existence means "hidden on this platform" — there's no
+// per-platform required/read_only concept, unlike role rules. hiddenOn is
+// the full desired hidden-set, replacing whatever's there today, same
+// replace-not-diff semantics as replaceFieldRoleRules/replaceFieldOptions.
+export async function replaceFieldPlatformRules(fieldId: string, hiddenOn: Platform[]): Promise<FieldPlatformRule[]> {
+  await getFieldById(fieldId);
+
+  const unique = new Set(hiddenOn);
+  if (unique.size !== hiddenOn.length) {
+    throw new ValidationError('Duplicate platform in platform rules — one rule per platform per field');
+  }
+  const invalid = hiddenOn.filter((p) => !ALL_PLATFORMS.includes(p));
+  if (invalid.length > 0) {
+    throw new ValidationError(`Unknown platform(s): ${invalid.join(', ')}`);
+  }
+
+  return transaction(async (client) => {
+    await client.query('DELETE FROM field_platform_rules WHERE field_id = $1', [fieldId]);
+    const inserted: FieldPlatformRule[] = [];
+    for (const platform of hiddenOn) {
+      const result = await client.query<FieldPlatformRule>(
+        'INSERT INTO field_platform_rules (field_id, platform) VALUES ($1, $2) RETURNING *',
+        [fieldId, platform]
+      );
+      inserted.push(result.rows[0]);
+    }
+    return inserted;
+  });
+}
+
+// ============================================================================
 // Validation rules
 // ============================================================================
 
@@ -547,7 +595,7 @@ function mapValidation(rules: FieldValidationRule[]): UiField['validation'] {
   return result;
 }
 
-export async function getUiSchema(screenId: string, roleName: string | undefined): Promise<UiSchema> {
+export async function getUiSchema(screenId: string, roleName: string | undefined, platform?: Platform): Promise<UiSchema> {
   const formResult = await query<FormDefinition>(
     "SELECT * FROM form_definitions WHERE screen_id = $1 AND status = 'published'",
     [screenId]
@@ -576,15 +624,19 @@ export async function getUiSchema(screenId: string, roleName: string | undefined
     // than erroring, since a typo'd role shouldn't take down the form.
   }
 
-  const [roleRulesResult, validationRulesResult, optionsResult] = await Promise.all([
+  const [roleRulesResult, validationRulesResult, optionsResult, platformRulesResult] = await Promise.all([
     roleId
       ? query<FieldRoleRule>('SELECT * FROM field_role_rules WHERE field_id = ANY($1) AND role_id = $2', [fieldIds, roleId])
       : Promise.resolve({ rows: [] as FieldRoleRule[] }),
     query<FieldValidationRule>('SELECT * FROM field_validation_rules WHERE field_id = ANY($1) ORDER BY sort_order ASC', [fieldIds]),
     query<FieldOption>('SELECT * FROM field_options WHERE field_id = ANY($1) AND is_active = true ORDER BY sort_order ASC', [fieldIds]),
+    platform
+      ? query<FieldPlatformRule>('SELECT * FROM field_platform_rules WHERE field_id = ANY($1) AND platform = $2', [fieldIds, platform])
+      : Promise.resolve({ rows: [] as FieldPlatformRule[] }),
   ]);
 
   const roleRuleByField = new Map(roleRulesResult.rows.map((r) => [r.field_id, r]));
+  const hiddenByPlatform = new Set(platformRulesResult.rows.map((r) => r.field_id));
   const validationRulesByField = new Map<string, FieldValidationRule[]>();
   for (const rule of validationRulesResult.rows) {
     const list = validationRulesByField.get(rule.field_id) ?? [];
@@ -606,6 +658,13 @@ export async function getUiSchema(screenId: string, roleName: string | undefined
     // Hidden fields are dropped entirely, not sent with a flag — the
     // Flutter client has no concept of a hidden field yet.
     if (roleRule?.state === 'hidden') {
+      continue;
+    }
+
+    // WORK-0014: same drop-don't-flag handling as role-hidden fields.
+    // hiddenByPlatform is only ever populated when a platform was passed —
+    // omitting ?platform= reproduces today's exact output unchanged.
+    if (hiddenByPlatform.has(field.id)) {
       continue;
     }
 

@@ -202,6 +202,7 @@ export const formDefinitions = pgTable('form_definitions', {
   name: varchar({ length: 255 }).notNull(),
   version: integer().notNull().default(1),
   status: varchar({ length: 20 }).notNull().default('draft'), // 'draft' | 'published'
+  isLocked: boolean().notNull().default(false), // WORK-0014: true for the two seeded system forms
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
   updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
@@ -238,6 +239,17 @@ export const fieldRoleRules = pgTable(
     updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
   },
   (t) => [unique().on(t.fieldId, t.roleId)]
+);
+
+export const fieldPlatformRules = pgTable(
+  'field_platform_rules',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+    platform: varchar({ length: 20 }).notNull(), // 'mobile' | 'web' | 'mcp' — presence = hidden on that platform
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.fieldId, t.platform)]
 );
 
 export const fieldValidationRules = pgTable('field_validation_rules', {
@@ -721,6 +733,7 @@ export type SodRule = InferSelectModel<typeof sodRules>;
 export type FormDefinition = InferSelectModel<typeof formDefinitions>;
 export type FieldDefinition = InferSelectModel<typeof fieldDefinitions>;
 export type FieldRoleRule = InferSelectModel<typeof fieldRoleRules>;
+export type FieldPlatformRule = InferSelectModel<typeof fieldPlatformRules>;
 export type FieldValidationRule = InferSelectModel<typeof fieldValidationRules>;
 export type FieldOption = InferSelectModel<typeof fieldOptions>;
 export type Workflow = InferSelectModel<typeof workflows>;

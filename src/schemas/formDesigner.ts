@@ -11,6 +11,7 @@ import { PaginationMetaSchema } from './common.js';
 export const FieldTypeSchema = z.enum(['text', 'decimal', 'date', 'dropdown', 'toggle', 'lookup']);
 export const FormStatusSchema = z.enum(['draft', 'published']);
 export const RoleRuleStateSchema = z.enum(['required', 'hidden', 'read_only']);
+export const PlatformSchema = z.enum(['mobile', 'web', 'mcp']);
 export const ValidationRuleTypeSchema = z.enum([
   'min_length', 'max_length', 'email', 'required',
   'number_gt', 'number_lt', 'number_gte', 'number_lte', 'number_eq', 'pattern',
@@ -46,6 +47,12 @@ export const FieldRoleRuleSchema = z.object({
   state: RoleRuleStateSchema,
 }).openapi('FieldRoleRule');
 
+export const FieldPlatformRuleSchema = z.object({
+  id: z.string().uuid(),
+  fieldId: z.string().uuid(),
+  platform: PlatformSchema,
+}).openapi('FieldPlatformRule');
+
 export const FieldValidationRuleSchema = z.object({
   id: z.string().uuid(),
   fieldId: z.string().uuid(),
@@ -74,6 +81,7 @@ export const FieldDefinitionSchema = z.object({
 
 export const FieldDefinitionWithRulesSchema = FieldDefinitionSchema.extend({
   roleRules: z.array(FieldRoleRuleSchema),
+  platformRules: z.array(FieldPlatformRuleSchema),
   validationRules: z.array(FieldValidationRuleSchema),
   options: z.array(FieldOptionSchema),
 }).openapi('FieldDefinitionWithRules');
@@ -84,6 +92,7 @@ export const FormDefinitionSchema = z.object({
   name: z.string(),
   version: z.number(),
   status: FormStatusSchema,
+  isLocked: z.boolean(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).openapi('FormDefinition');
@@ -136,6 +145,10 @@ export const ReplaceRoleRulesRequestSchema = z.object({
   })),
 }).openapi('ReplaceRoleRulesRequest');
 
+export const ReplacePlatformRulesRequestSchema = z.object({
+  hiddenOn: z.array(PlatformSchema),
+}).openapi('ReplacePlatformRulesRequest');
+
 export const ReplaceValidationRulesRequestSchema = z.object({
   rules: z.array(z.object({
     ruleType: ValidationRuleTypeSchema,
@@ -183,6 +196,7 @@ export const ScreenIdParamSchema = z.object({
 
 export const UiSchemaQuerySchema = z.object({
   role: z.string().max(100).optional().openapi({ description: "Requesting user's role code; defaults to no role-specific rules applied (base schema) when omitted" }),
+  platform: PlatformSchema.optional().openapi({ description: 'Consuming platform (mobile/web/mcp); defaults to no platform filtering (today\'s exact output) when omitted' }),
 });
 
 // ============================================================================
