@@ -104,7 +104,7 @@ export const UpdateExpenseLineSchema = z.object({
   description: z.string().min(1).max(255).optional(),
   amount: z.number().optional(),
   currency: z.string().length(3).optional(),
-  categoryCode: z.string().max(100).optional(),
+  categoryCode: z.string().max(100).nullable().optional(),
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/).optional(),
   // v5.0 fields
   merchantName: z.string().max(255).nullable().optional(),
