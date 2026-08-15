@@ -6,6 +6,7 @@ import {
   listForms,
   createForm,
   getFormDetail,
+  deleteForm,
   publishForm,
   createField,
   updateField,
@@ -66,7 +67,7 @@ const listFormsRoute = createRoute({
 
 const listFormsHandler: RouteHandler<typeof listFormsRoute> = async (c) => {
   const q = c.req.valid('query');
-  const params = { page: q.page, limit: q.limit, sortOrder: 'asc' as const };
+  const params = { page: q.page, limit: q.limit, sortBy: q.sortBy, sortOrder: q.sortOrder };
   const { forms, total } = await listForms(params, { status: q.status });
   const totalPages = Math.ceil(total / q.limit);
   return c.json({
@@ -130,6 +131,33 @@ const getFormHandler: RouteHandler<typeof getFormRoute> = async (c) => {
   return c.json(form as any, 200);
 };
 formDesignerRouter.openapi(getFormRoute, getFormHandler);
+
+// ============================================================================
+// DELETE /v1/admin/forms/{formId} — delete a non-locked form
+// ============================================================================
+
+const deleteFormRoute = createRoute({
+  method: 'delete',
+  path: '/forms/{formId}',
+  tags: ['Form Designer'],
+  summary: 'Delete a form',
+  description: 'Delete a user-created form and everything on it (fields, rules, options, custom field values). Locked system forms cannot be deleted.',
+  security,
+  middleware: [requirePermission('form.manage')] as const,
+  request: { params: FormIdParamSchema, headers: AuthHeaderSchema },
+  responses: {
+    200: { description: 'Form deleted', content: { 'application/json': { schema: MessageSchema } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Cannot delete a locked system form', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const deleteFormHandler: RouteHandler<typeof deleteFormRoute> = async (c) => {
+  const { formId } = c.req.valid('param');
+  await deleteForm(formId);
+  return c.json({ message: 'Form deleted successfully' }, 200);
+};
+formDesignerRouter.openapi(deleteFormRoute, deleteFormHandler);
 
 // ============================================================================
 // POST /v1/admin/forms/{formId}/fields — create a user-defined field

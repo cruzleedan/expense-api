@@ -90,6 +90,7 @@ const FORM_SORTABLE_FIELDS: Record<string, string> = {
   screenId: 'screen_id',
   name: 'name',
   status: 'status',
+  isLocked: 'is_locked',
   createdAt: 'created_at',
   updatedAt: 'updated_at',
 };
@@ -151,6 +152,18 @@ export async function getFormById(formId: string): Promise<FormDefinition> {
     throw new NotFoundError('Form');
   }
   return result.rows[0];
+}
+
+// Mirrors deleteField's is_system_defined guard, keyed on is_locked
+// instead. No extra cleanup needed: field_definitions and everything that
+// cascades from it (role/platform/validation rules, options, custom
+// field values) already has ON DELETE CASCADE back to form_definitions.
+export async function deleteForm(formId: string): Promise<void> {
+  const existing = await getFormById(formId);
+  if (existing.is_locked) {
+    throw new ConflictError(`Cannot delete locked system form "${existing.screen_id}"`);
+  }
+  await query('DELETE FROM form_definitions WHERE id = $1', [formId]);
 }
 
 export async function getFormDetail(formId: string): Promise<FormDefinition & { fields: FieldDefinitionWithRules[] }> {

@@ -171,10 +171,14 @@ export const ReplaceOptionsRequestSchema = z.object({
 // List / param schemas
 // ============================================================================
 
+export const FormSortBySchema = z.enum(['screenId', 'name', 'status', 'isLocked', 'createdAt', 'updatedAt']);
+
 export const FormListQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
   status: FormStatusSchema.optional(),
+  sortBy: FormSortBySchema.optional().openapi({ description: 'Defaults to name ascending when omitted' }),
+  sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc' }),
 });
 
 export const FormListResponseSchema = z.object({
