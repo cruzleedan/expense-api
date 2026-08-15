@@ -5,7 +5,7 @@ status: building
 kind: feature
 opened: 2026-08-15
 decided: 2026-08-15
-branch: ~
+branch: feature/0010-dynamic-form-designer-api
 supersedes: ~
 superseded-by: ~
 ---
