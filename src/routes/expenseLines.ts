@@ -35,6 +35,10 @@ import {
   SyncManifestResponseSchema,
 } from '../schemas/common.js';
 
+// DB column is `expenseDate`; the wire contract calls it `transactionDate` on both read and write.
+const serializeLine = (l: any) => ExpenseLineSchema.parse({ ...l, transactionDate: l.expenseDate });
+const serializeLines = (ls: unknown[]) => ls.map(serializeLine);
+
 // Router for lines under reports: /expense-reports/:reportId/lines
 const expenseLinesRouter = new OpenAPIHono();
 
@@ -101,7 +105,7 @@ const listHandler: RouteHandler<typeof listRoute> = async (c) => {
 
   const { lines, total } = await listExpenseLines(reportId, userId, paginationParams, skipOwnership);
 
-  return c.json(paginate(lines, total, paginationParams) as any, 200);
+  return c.json(paginate(serializeLines(lines), total, paginationParams), 200);
 };
 expenseLinesRouter.openapi(listRoute, listHandler);
 
@@ -150,7 +154,7 @@ const createLineHandler: RouteHandler<typeof createLineRoute> = async (c) => {
 
   const line = await createExpenseLine(userId, input as CreateExpenseLineInput, reportId);
 
-  return c.json(line as any, 201);
+  return c.json(serializeLine(line), 201);
 };
 expenseLinesRouter.openapi(createLineRoute, createLineHandler);
 
@@ -199,7 +203,7 @@ const bulkCreateLineHandler: RouteHandler<typeof bulkCreateLineRoute> = async (c
 
   const result = await bulkCreateExpenseLines(reportId, userId, input.lines);
 
-  return c.json(result as any, 200);
+  return c.json({ created: serializeLines(result.created), failed: result.failed }, 200);
 };
 expenseLinesRouter.openapi(bulkCreateLineRoute, bulkCreateLineHandler);
 
@@ -239,7 +243,7 @@ const createStandaloneLineHandler: RouteHandler<typeof createStandaloneLineRoute
 
   const line = await createExpenseLine(userId, input as CreateExpenseLineInput);
 
-  return c.json(line as any, 201);
+  return c.json(serializeLine(line), 201);
 };
 expenseLineDirectRouter.openapi(createStandaloneLineRoute, createStandaloneLineHandler);
 
@@ -317,7 +321,7 @@ const getLineHandler: RouteHandler<typeof getLineRoute> = async (c) => {
 
   const line = await getExpenseLineById(id, userId);
 
-  return c.json(line as any, 200);
+  return c.json(serializeLine(line), 200);
 };
 expenseLineDirectRouter.openapi(getLineRoute, getLineHandler);
 
@@ -367,7 +371,7 @@ const updateLineHandler: RouteHandler<typeof updateLineRoute> = async (c) => {
 
   const line = await updateExpenseLine(id, userId, input as UpdateExpenseLineInput);
 
-  return c.json(line as any, 200);
+  return c.json(serializeLine(line), 200);
 };
 expenseLineDirectRouter.openapi(updateLineRoute, updateLineHandler);
 
@@ -452,7 +456,7 @@ const syncLinesHandler: RouteHandler<typeof syncLinesRoute> = async (c) => {
     assigned: query.assigned === undefined ? undefined : query.assigned === 'true',
     search: query.search,
   });
-  return c.json(paginate(lines, total, params) as any, 200);
+  return c.json(paginate(serializeLines(lines), total, params), 200);
 };
 expenseLineDirectRouter.openapi(syncLinesRoute, syncLinesHandler);
 
