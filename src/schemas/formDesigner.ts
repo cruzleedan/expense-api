@@ -149,6 +149,15 @@ export const ReplacePlatformRulesRequestSchema = z.object({
   hiddenOn: z.array(PlatformSchema),
 }).openapi('ReplacePlatformRulesRequest');
 
+export const FieldDeleteImpactSchema = z.object({
+  valueCount: z.number().int(),
+}).openapi('FieldDeleteImpact');
+
+export const FormDeleteImpactSchema = z.object({
+  fieldCount: z.number().int(),
+  valueCount: z.number().int(),
+}).openapi('FormDeleteImpact');
+
 export const ReplaceValidationRulesRequestSchema = z.object({
   rules: z.array(z.object({
     ruleType: ValidationRuleTypeSchema,

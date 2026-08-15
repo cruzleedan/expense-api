@@ -7,10 +7,12 @@ import {
   createForm,
   getFormDetail,
   deleteForm,
+  getFormDeleteImpact,
   publishForm,
   createField,
   updateField,
   deleteField,
+  getFieldDeleteImpact,
   replaceFieldRoleRules,
   replaceFieldPlatformRules,
   replaceFieldValidationRules,
@@ -35,6 +37,8 @@ import {
   ReplacePlatformRulesRequestSchema,
   ReplaceValidationRulesRequestSchema,
   ReplaceOptionsRequestSchema,
+  FieldDeleteImpactSchema,
+  FormDeleteImpactSchema,
 } from '../schemas/formDesigner.js';
 import { ErrorSchema, MessageSchema, AuthHeaderSchema } from '../schemas/common.js';
 import { z } from '@hono/zod-openapi';
@@ -160,6 +164,32 @@ const deleteFormHandler: RouteHandler<typeof deleteFormRoute> = async (c) => {
 formDesignerRouter.openapi(deleteFormRoute, deleteFormHandler);
 
 // ============================================================================
+// GET /v1/admin/forms/{formId}/delete-impact — WORK-0017
+// ============================================================================
+
+const formDeleteImpactRoute = createRoute({
+  method: 'get',
+  path: '/forms/{formId}/delete-impact',
+  tags: ['Form Designer'],
+  summary: 'Preview what deleting a form would take with it',
+  description: 'Field and saved-value counts, for a delete confirmation dialog. Not a general-purpose read.',
+  security,
+  middleware: [requirePermission('form.manage')] as const,
+  request: { params: FormIdParamSchema, headers: AuthHeaderSchema },
+  responses: {
+    200: { description: 'Delete impact', content: { 'application/json': { schema: FormDeleteImpactSchema } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const formDeleteImpactHandler: RouteHandler<typeof formDeleteImpactRoute> = async (c) => {
+  const { formId } = c.req.valid('param');
+  const impact = await getFormDeleteImpact(formId);
+  return c.json(impact, 200);
+};
+formDesignerRouter.openapi(formDeleteImpactRoute, formDeleteImpactHandler);
+
+// ============================================================================
 // POST /v1/admin/forms/{formId}/fields — create a user-defined field
 // ============================================================================
 
@@ -275,6 +305,32 @@ const deleteFieldHandler: RouteHandler<typeof deleteFieldRoute> = async (c) => {
   return c.json({ message: 'Field deleted successfully' }, 200);
 };
 formDesignerRouter.openapi(deleteFieldRoute, deleteFieldHandler);
+
+// ============================================================================
+// GET /v1/admin/fields/{fieldId}/delete-impact — WORK-0017
+// ============================================================================
+
+const fieldDeleteImpactRoute = createRoute({
+  method: 'get',
+  path: '/fields/{fieldId}/delete-impact',
+  tags: ['Form Designer'],
+  summary: 'Preview what deleting a field would take with it',
+  description: 'Saved-value count, for a delete confirmation dialog. Not a general-purpose read.',
+  security,
+  middleware: [requirePermission('form.manage')] as const,
+  request: { params: FieldIdParamSchema, headers: AuthHeaderSchema },
+  responses: {
+    200: { description: 'Delete impact', content: { 'application/json': { schema: FieldDeleteImpactSchema } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const fieldDeleteImpactHandler: RouteHandler<typeof fieldDeleteImpactRoute> = async (c) => {
+  const { fieldId } = c.req.valid('param');
+  const impact = await getFieldDeleteImpact(fieldId);
+  return c.json(impact, 200);
+};
+formDesignerRouter.openapi(fieldDeleteImpactRoute, fieldDeleteImpactHandler);
 
 // ============================================================================
 // PUT /v1/admin/fields/{fieldId}/role-rules — replace the full set

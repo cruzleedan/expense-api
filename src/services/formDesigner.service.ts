@@ -366,6 +366,39 @@ export async function deleteField(fieldId: string): Promise<void> {
   await query('DELETE FROM field_definitions WHERE id = $1', [fieldId]);
 }
 
+// WORK-0017: how much data a delete would take with it, for the confirm
+// dialog. Checks both value tables rather than branching on the field's
+// screen — a field only ever has matches in one, but this stays correct
+// even if that assumption changes. Not a general-purpose read — gated by
+// the same form.manage permission as the delete actions themselves.
+export async function getFieldDeleteImpact(fieldId: string): Promise<{ valueCount: number }> {
+  await getFieldById(fieldId);
+  const result = await query<{ count: string }>(
+    `SELECT
+       (SELECT COUNT(*) FROM expense_line_field_values WHERE field_id = $1) +
+       (SELECT COUNT(*) FROM expense_report_field_values WHERE field_id = $1) AS count`,
+    [fieldId]
+  );
+  return { valueCount: parseInt(result.rows[0].count, 10) };
+}
+
+export async function getFormDeleteImpact(formId: string): Promise<{ fieldCount: number; valueCount: number }> {
+  await getFormById(formId);
+  const result = await query<{ field_count: string; value_count: string }>(
+    `SELECT
+       (SELECT COUNT(*) FROM field_definitions WHERE form_id = $1) AS field_count,
+       (
+         (SELECT COUNT(*) FROM expense_line_field_values v JOIN field_definitions f ON f.id = v.field_id WHERE f.form_id = $1) +
+         (SELECT COUNT(*) FROM expense_report_field_values v JOIN field_definitions f ON f.id = v.field_id WHERE f.form_id = $1)
+       ) AS value_count`,
+    [formId]
+  );
+  return {
+    fieldCount: parseInt(result.rows[0].field_count, 10),
+    valueCount: parseInt(result.rows[0].value_count, 10),
+  };
+}
+
 // ============================================================================
 // Role rules
 // ============================================================================
