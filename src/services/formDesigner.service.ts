@@ -10,7 +10,9 @@ import {
 // Types (snake_case, mirroring DB columns — see src/db/schema.sql)
 // ============================================================================
 
-export type FieldType = 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle';
+// WORK-0013: dropdown is now always static; lookup is the client-resolved
+// case that used to live inside dropdown via options_source.
+export type FieldType = 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle' | 'lookup';
 export type FormStatus = 'draft' | 'published';
 export type RoleRuleState = 'required' | 'hidden' | 'read_only';
 export type ValidationRuleType =
@@ -39,7 +41,7 @@ export interface FieldDefinition {
   helper_text: string | null;
   decimal_places: number | null;
   max_lines: number | null;
-  options_source: string | null;
+  lookup_source: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -209,8 +211,22 @@ export interface CreateFieldInput {
   helperText?: string;
   decimalPlaces?: number;
   maxLines?: number;
-  optionsSource?: string;
+  lookupSource?: string;
   sortOrder?: number;
+}
+
+// WORK-0013: lookupSource is required when fieldType is 'lookup' and
+// forbidden otherwise — dropdown is always static now, the ambiguity this
+// used to require (dropdown + optional options_source) is gone by
+// construction. Shared by create and update.
+function assertLookupSourceMatchesType(fieldType: FieldType, lookupSource: string | null | undefined, fieldKeyForError: string): void {
+  if (fieldType === 'lookup') {
+    if (!lookupSource) {
+      throw new ValidationError(`lookupSource is required when fieldType is "lookup" (field "${fieldKeyForError}")`);
+    }
+  } else if (lookupSource) {
+    throw new ValidationError(`lookupSource only applies to lookup fields, not "${fieldType}" (field "${fieldKeyForError}")`);
+  }
 }
 
 export async function createField(formId: string, input: CreateFieldInput): Promise<FieldDefinition> {
@@ -221,6 +237,8 @@ export async function createField(formId: string, input: CreateFieldInput): Prom
     throw new ConflictError(`Field with key "${input.fieldKey}" already exists on this form`);
   }
 
+  assertLookupSourceMatchesType(input.fieldType, input.lookupSource, input.fieldKey);
+
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const maxResult = await query<{ max: number | null }>('SELECT MAX(sort_order) as max FROM field_definitions WHERE form_id = $1', [formId]);
@@ -230,13 +248,13 @@ export async function createField(formId: string, input: CreateFieldInput): Prom
   const result = await query<FieldDefinition>(
     `INSERT INTO field_definitions (
       form_id, field_key, field_type, label, is_system_defined, sort_order,
-      hint_text, helper_text, decimal_places, max_lines, options_source
+      hint_text, helper_text, decimal_places, max_lines, lookup_source
     ) VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8, $9, $10)
     RETURNING *`,
     [
       formId, input.fieldKey, input.fieldType, input.label, sortOrder,
       input.hintText ?? null, input.helperText ?? null,
-      input.decimalPlaces ?? null, input.maxLines ?? null, input.optionsSource ?? null,
+      input.decimalPlaces ?? null, input.maxLines ?? null, input.lookupSource ?? null,
     ]
   );
 
@@ -259,12 +277,12 @@ export interface UpdateFieldInput {
   fieldType?: FieldType;
   decimalPlaces?: number | null;
   maxLines?: number | null;
-  optionsSource?: string | null;
+  lookupSource?: string | null;
 }
 
 // Columns locked once a field is system-defined. label/hintText/helperText/
 // sortOrder are always editable — see schemas/formDesigner.ts.
-const SYSTEM_FIELD_LOCKED_KEYS: (keyof UpdateFieldInput)[] = ['fieldType', 'decimalPlaces', 'maxLines', 'optionsSource'];
+const SYSTEM_FIELD_LOCKED_KEYS: (keyof UpdateFieldInput)[] = ['fieldType', 'decimalPlaces', 'maxLines', 'lookupSource'];
 
 export async function updateField(fieldId: string, input: UpdateFieldInput): Promise<FieldDefinition> {
   const existing = await getFieldById(fieldId);
@@ -276,6 +294,12 @@ export async function updateField(fieldId: string, input: UpdateFieldInput): Pro
         `Cannot edit ${attemptedLockedKeys.join(', ')} on system-defined field "${existing.field_key}" — only label, hintText, helperText, and sortOrder are editable`
       );
     }
+  }
+
+  if (input.fieldType !== undefined || input.lookupSource !== undefined) {
+    const resultingFieldType = input.fieldType ?? existing.field_type;
+    const resultingLookupSource = input.lookupSource !== undefined ? input.lookupSource : existing.lookup_source;
+    assertLookupSourceMatchesType(resultingFieldType, resultingLookupSource, existing.field_key);
   }
 
   const updates: string[] = [];
@@ -295,7 +319,7 @@ export async function updateField(fieldId: string, input: UpdateFieldInput): Pro
   if (input.fieldType !== undefined) set('field_type', input.fieldType);
   if (input.decimalPlaces !== undefined) set('decimal_places', input.decimalPlaces);
   if (input.maxLines !== undefined) set('max_lines', input.maxLines);
-  if (input.optionsSource !== undefined) set('options_source', input.optionsSource);
+  if (input.lookupSource !== undefined) set('lookup_source', input.lookupSource);
 
   if (updates.length === 0) {
     return existing;
@@ -414,13 +438,11 @@ export interface OptionInput {
 export async function replaceFieldOptions(fieldId: string, options: OptionInput[]): Promise<FieldOption[]> {
   const field = await getFieldById(fieldId);
 
+  // WORK-0013: dropdown is always static now — a dropdown field can no
+  // longer have a lookup_source to conflict with, so this check alone is
+  // sufficient (it used to also need a separate options_source check here).
   if (field.field_type !== 'dropdown') {
     throw new ValidationError(`Field "${field.field_key}" is not a dropdown field — options only apply to dropdown fields`);
-  }
-  if (field.options_source) {
-    throw new ValidationError(
-      `Field "${field.field_key}" has optionsSource="${field.options_source}" set — a field resolves its options from either optionsSource or field_options, never both`
-    );
   }
 
   const codes = options.map((o) => o.code);
@@ -448,9 +470,14 @@ export async function replaceFieldOptions(fieldId: string, options: OptionInput[
 // Client-facing assembly — GET /v1/ui-schemas/{screenId}
 // ============================================================================
 
+// WORK-0013: the wire `type` never includes 'lookup' — see the
+// serialization note in getUiSchema() below. This is a narrower type than
+// the internal FieldType on purpose.
+export type UiFieldType = 'text' | 'decimal' | 'date' | 'dropdown' | 'toggle';
+
 export interface UiField {
   key: string;
-  type: FieldType;
+  type: UiFieldType;
   label: string;
   required: boolean;
   hintText: string | null;
@@ -594,17 +621,25 @@ export async function getUiSchema(screenId: string, roleName: string | undefined
       ? !isReadOnly
       : roleRule?.state === 'required';
 
-    // null unless this is a dropdown resolving its options from
-    // field_options (not optionsSource) — non-dropdown fields and
-    // optionsSource-backed dropdowns both report null, matching the
-    // contract's example shape, rather than an empty array either way.
-    const options = field.field_type === 'dropdown' && !field.options_source
+    // WORK-0013 compatibility shim: 'lookup' is an internal-only field_type
+    // (added to split it out of dropdown's old dual-mode). The wire
+    // contract is WORK-0021's already-shipped Flutter format, which has no
+    // 'lookup' case — so a lookup field is serialized exactly the way a
+    // dropdown+optionsSource field always has been: type "dropdown",
+    // optionsSource set, options null. A real dropdown (always static now)
+    // serializes as type "dropdown", options from field_options, no
+    // optionsSource. Do NOT "simplify" this by emitting a real "lookup"
+    // wire type until Flutter has a follow-up that understands it — see
+    // context/work/0013-lookup-field-type.md.
+    const wireType: UiFieldType = field.field_type === 'lookup' ? 'dropdown' : field.field_type;
+    const wireOptionsSource = field.field_type === 'lookup' ? field.lookup_source : null;
+    const options = field.field_type === 'dropdown'
       ? (optionsByField.get(field.id) ?? []).map((o) => ({ value: o.code, label: o.value }))
       : null;
 
     uiFields.push({
       key: field.field_key,
-      type: field.field_type,
+      type: wireType,
       label: field.label,
       required,
       hintText: field.hint_text,
@@ -612,7 +647,7 @@ export async function getUiSchema(screenId: string, roleName: string | undefined
       decimalPlaces: field.decimal_places,
       maxLines: field.max_lines,
       options,
-      optionsSource: field.options_source,
+      optionsSource: wireOptionsSource,
       isEnabled: !isReadOnly,
       validation: mapValidation(validationRulesByField.get(field.id) ?? []),
     });

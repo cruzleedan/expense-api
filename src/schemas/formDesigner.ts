@@ -5,13 +5,24 @@ import { PaginationMetaSchema } from './common.js';
 // Enums
 // ============================================================================
 
-export const FieldTypeSchema = z.enum(['text', 'decimal', 'date', 'dropdown', 'toggle']);
+// WORK-0013: 'lookup' added, 'dropdown' is now static-only. This is the
+// internal/admin model — the client-facing wire `type` never emits
+// 'lookup', see UiFieldTypeSchema below.
+export const FieldTypeSchema = z.enum(['text', 'decimal', 'date', 'dropdown', 'toggle', 'lookup']);
 export const FormStatusSchema = z.enum(['draft', 'published']);
 export const RoleRuleStateSchema = z.enum(['required', 'hidden', 'read_only']);
 export const ValidationRuleTypeSchema = z.enum([
   'min_length', 'max_length', 'email', 'required',
   'number_gt', 'number_lt', 'number_gte', 'number_lte', 'number_eq', 'pattern',
 ]);
+
+// Known lookup sources the Flutter client actually resolves client-side —
+// WORK-0013 (supersedes WORK-0011's optionsSource-scoped version of this
+// same allowlist). Hand-maintained; kept in sync with expense-tracker's
+// copy (context/work/0014-lookup-field-type-editor.md) by convention, not
+// tooling.
+export const KNOWN_LOOKUP_SOURCES = ['local:category'] as const;
+export const LookupSourceSchema = z.enum(KNOWN_LOOKUP_SOURCES);
 
 // ============================================================================
 // Resource schemas (admin/designer shape — snake_case DB fields transformed
@@ -56,7 +67,7 @@ export const FieldDefinitionSchema = z.object({
   helperText: z.string().nullable(),
   decimalPlaces: z.number().nullable(),
   maxLines: z.number().nullable(),
-  optionsSource: z.string().nullable(),
+  lookupSource: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).openapi('FieldDefinition');
@@ -98,12 +109,12 @@ export const CreateFieldRequestSchema = z.object({
   helperText: z.string().max(500).optional(),
   decimalPlaces: z.number().int().min(0).max(10).optional(),
   maxLines: z.number().int().positive().optional(),
-  optionsSource: z.string().max(100).optional(),
+  lookupSource: LookupSourceSchema.optional().openapi({ description: "Required (and only valid) when fieldType is 'lookup' — enforced at the service layer, not here, since it's a cross-field rule" }),
   sortOrder: z.number().int().optional().openapi({ description: 'Defaults to end of the list when omitted' }),
 }).openapi('CreateFieldRequest');
 
 // label/hintText/helperText/sortOrder are always editable, even on
-// system-defined fields. fieldType/decimalPlaces/maxLines/optionsSource are
+// system-defined fields. fieldType/decimalPlaces/maxLines/lookupSource are
 // rejected with 409 when the target field is system-defined — see
 // context/work/0010-dynamic-form-designer-api.md, data model callout.
 // fieldKey and isSystemDefined are immutable and not accepted here at all.
@@ -115,7 +126,7 @@ export const UpdateFieldRequestSchema = z.object({
   fieldType: FieldTypeSchema.optional(),
   decimalPlaces: z.number().int().min(0).max(10).nullable().optional(),
   maxLines: z.number().int().positive().nullable().optional(),
-  optionsSource: z.string().max(100).nullable().optional(),
+  lookupSource: LookupSourceSchema.nullable().optional(),
 }).openapi('UpdateFieldRequest');
 
 export const ReplaceRoleRulesRequestSchema = z.object({
@@ -194,9 +205,17 @@ export const UiFieldOptionSchema = z.object({
   label: z.string(),
 });
 
+// The wire `type` never includes 'lookup' — WORK-0013's read-endpoint
+// compatibility shim always serializes a 'lookup'-typed field as
+// type: 'dropdown' + optionsSource, matching WORK-0021's already-shipped
+// Flutter contract exactly. Deliberately a narrower enum than the internal
+// FieldTypeSchema so the OpenAPI docs don't advertise a wire value this
+// endpoint will never actually emit.
+export const UiFieldTypeSchema = z.enum(['text', 'decimal', 'date', 'dropdown', 'toggle']);
+
 export const UiFieldSchema = z.object({
   key: z.string(),
-  type: FieldTypeSchema,
+  type: UiFieldTypeSchema,
   label: z.string(),
   required: z.boolean(),
   hintText: z.string().nullable(),
