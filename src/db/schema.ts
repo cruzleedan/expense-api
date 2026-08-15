@@ -384,6 +384,20 @@ export const approvalHistory = pgTable('approval_history', {
   wasEscalated: boolean().default(false),
 });
 
+// WORK-0015: report equivalent of expenseLineFieldValues above.
+export const expenseReportFieldValues = pgTable(
+  'expense_report_field_values',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    expenseReportId: uuid().notNull().references(() => expenseReports.id, { onDelete: 'cascade' }),
+    fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+    value: text(),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.expenseReportId, t.fieldId)]
+);
+
 // ============================================================================
 // EXPENSE CATEGORIES
 // ============================================================================
@@ -480,6 +494,22 @@ export const expenseLines = pgTable('expense_lines', {
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
   updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
+
+// WORK-0015: values for admin-added custom fields — queried via raw SQL
+// (src/services/expenseLine.service.ts), per ADR-0002; defined here for
+// TypeScript types only, same as the form-designer tables above.
+export const expenseLineFieldValues = pgTable(
+  'expense_line_field_values',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    expenseLineId: uuid().notNull().references(() => expenseLines.id, { onDelete: 'cascade' }),
+    fieldId: uuid().notNull().references(() => fieldDefinitions.id, { onDelete: 'cascade' }),
+    value: text(),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.expenseLineId, t.fieldId)]
+);
 
 // ============================================================================
 // RECEIPTS
@@ -736,6 +766,8 @@ export type FieldRoleRule = InferSelectModel<typeof fieldRoleRules>;
 export type FieldPlatformRule = InferSelectModel<typeof fieldPlatformRules>;
 export type FieldValidationRule = InferSelectModel<typeof fieldValidationRules>;
 export type FieldOption = InferSelectModel<typeof fieldOptions>;
+export type ExpenseLineFieldValue = InferSelectModel<typeof expenseLineFieldValues>;
+export type ExpenseReportFieldValue = InferSelectModel<typeof expenseReportFieldValues>;
 export type Workflow = InferSelectModel<typeof workflows>;
 export type WorkflowAssignment = InferSelectModel<typeof workflowAssignments>;
 export type ExpenseReport = InferSelectModel<typeof expenseReports>;

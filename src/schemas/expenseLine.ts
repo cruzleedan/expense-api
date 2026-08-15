@@ -51,6 +51,11 @@ export const ExpenseLineSchema = z.object({
   createdAt: datetimeField,
   updatedAt: datetimeField,
   deletedAt: datetimeFieldNullable,
+  // WORK-0015: admin-added custom fields (form designer), keyed by fieldKey.
+  // Empty object when the form has no custom fields, none are filled in, or
+  // (bulk create, sync, orphan listing — not yet wired to this) the value
+  // simply wasn't fetched for this response.
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
 }).openapi('ExpenseLine');
 
 export const CreateExpenseLineSchema = z.object({
@@ -86,6 +91,10 @@ export const CreateExpenseLineSchema = z.object({
   isRecurring: z.boolean().optional().openapi({ example: false }),
   recurrencePattern: z.string().max(50).optional().openapi({ example: 'monthly' }),
   recurrenceMerchant: z.string().max(255).optional().openapi({ example: 'Netflix' }),
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().openapi({
+    description: 'Values for admin-added custom fields on the expense_line form, keyed by fieldKey. Unknown or system-defined keys are rejected with 400.',
+    example: { costCenter: 'CC-1234' },
+  }),
 }).openapi('CreateExpenseLine');
 
 export const UpdateExpenseLineSchema = z.object({
@@ -120,6 +129,9 @@ export const UpdateExpenseLineSchema = z.object({
   isRecurring: z.boolean().optional(),
   recurrencePattern: z.string().max(50).nullable().optional(),
   recurrenceMerchant: z.string().max(255).nullable().optional(),
+  customFields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().openapi({
+    description: 'Replaces the full set of custom field values when provided. Unknown or system-defined keys are rejected with 400.',
+  }),
 }).openapi('UpdateExpenseLine');
 
 // Allowed sortBy values for expense lines

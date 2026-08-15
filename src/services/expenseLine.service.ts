@@ -1,11 +1,12 @@
 import { db } from '../db/drizzle.js';
-import { expenseLines, expenseReports, expenseCategories, receipts, receiptLineAssociations } from '../db/schema.js';
+import { expenseLines, expenseReports, expenseCategories, receipts, receiptLineAssociations, expenseLineFieldValues } from '../db/schema.js';
 import type { ExpenseLine } from '../db/schema.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
 import { logger } from '../utils/logger.js';
+import { query } from '../db/client.js';
 import {
-  eq, and, or, ilike, asc, desc, count, gt, isNull, isNotNull, sql, type SQL,
+  eq, and, or, ilike, asc, desc, count, gt, isNull, isNotNull, inArray, sql, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 
@@ -24,6 +25,88 @@ async function assertCategoryCodeExists(categoryCode: string | null | undefined)
 }
 
 export type { ExpenseLine };
+export type ExpenseLineWithCustomFields = ExpenseLine & { customFields: Record<string, string | number | boolean> };
+
+// ============================================================================
+// WORK-0015: custom field values. field_definitions/form_definitions are the
+// form-designer domain, which per ADR-0002 (and formDesigner.service.ts's
+// own convention) is queried via raw SQL, not Drizzle, even from here.
+// expense_line_field_values itself uses Drizzle, matching the rest of this
+// file — see context/work/0015-custom-field-value-storage.md.
+// ============================================================================
+
+interface CustomFieldDef {
+  id: string;
+  field_type: string;
+}
+
+async function getCustomFieldDefsByKey(): Promise<Map<string, CustomFieldDef>> {
+  const result = await query<CustomFieldDef & { field_key: string }>(
+    `SELECT fd.id, fd.field_key, fd.field_type
+     FROM field_definitions fd
+     JOIN form_definitions f ON f.id = fd.form_id
+     WHERE f.screen_id = 'expense_line' AND f.status = 'published' AND fd.is_system_defined = false`
+  );
+  return new Map(result.rows.map((r) => [r.field_key, { id: r.id, field_type: r.field_type }]));
+}
+
+function coerceCustomFieldValue(fieldType: string, raw: string): string | number | boolean {
+  if (fieldType === 'decimal') return Number(raw);
+  if (fieldType === 'toggle') return raw === 'true';
+  return raw;
+}
+
+async function setExpenseLineCustomFields(
+  lineId: string,
+  customFields: Record<string, string | number | boolean>
+): Promise<void> {
+  const defsByKey = await getCustomFieldDefsByKey();
+  const unknown = Object.keys(customFields).filter((k) => !defsByKey.has(k));
+  if (unknown.length > 0) {
+    throw new ValidationError(`Unknown or non-custom field(s) on expense_line: ${unknown.join(', ')}`);
+  }
+
+  await db.delete(expenseLineFieldValues).where(eq(expenseLineFieldValues.expenseLineId, lineId));
+  const entries = Object.entries(customFields);
+  if (entries.length === 0) return;
+
+  await db.insert(expenseLineFieldValues).values(
+    entries.map(([key, value]) => ({
+      expenseLineId: lineId,
+      fieldId: defsByKey.get(key)!.id,
+      value: String(value),
+    }))
+  );
+}
+
+async function getCustomFieldsForLines(
+  lineIds: string[]
+): Promise<Map<string, Record<string, string | number | boolean>>> {
+  const result = new Map<string, Record<string, string | number | boolean>>();
+  if (lineIds.length === 0) return result;
+
+  const rows = await db
+    .select({ expenseLineId: expenseLineFieldValues.expenseLineId, value: expenseLineFieldValues.value, fieldId: expenseLineFieldValues.fieldId })
+    .from(expenseLineFieldValues)
+    .where(inArray(expenseLineFieldValues.expenseLineId, lineIds));
+  if (rows.length === 0) return result;
+
+  const fieldIds = [...new Set(rows.map((r) => r.fieldId))];
+  const defsResult = await query<{ id: string; field_key: string; field_type: string }>(
+    `SELECT id, field_key, field_type FROM field_definitions WHERE id = ANY($1)`,
+    [fieldIds]
+  );
+  const defsById = new Map(defsResult.rows.map((d) => [d.id, d]));
+
+  for (const row of rows) {
+    const def = defsById.get(row.fieldId);
+    if (!def || row.value === null) continue;
+    const existing = result.get(row.expenseLineId) ?? {};
+    existing[def.field_key] = coerceCustomFieldValue(def.field_type, row.value);
+    result.set(row.expenseLineId, existing);
+  }
+  return result;
+}
 
 export interface CreateExpenseLineInput {
   clientId?: string;
@@ -54,6 +137,7 @@ export interface CreateExpenseLineInput {
   isRecurring?: boolean;
   recurrencePattern?: string;
   recurrenceMerchant?: string;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export interface UpdateExpenseLineInput {
@@ -85,13 +169,14 @@ export interface UpdateExpenseLineInput {
   isRecurring?: boolean;
   recurrencePattern?: string;
   recurrenceMerchant?: string;
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export async function createExpenseLine(
   userId: string,
   input: CreateExpenseLineInput,
   reportId?: string
-): Promise<ExpenseLine> {
+): Promise<ExpenseLineWithCustomFields> {
   if (reportId) {
     await verifyReportOwnership(reportId, userId);
   }
@@ -104,7 +189,10 @@ export async function createExpenseLine(
       .from(expenseLines)
       .where(eq(expenseLines.clientId, input.clientId))
       .limit(1);
-    if (existing) return existing;
+    if (existing) {
+      const customFieldsByLine = await getCustomFieldsForLines([existing.id]);
+      return { ...existing, customFields: customFieldsByLine.get(existing.id) ?? {} };
+    }
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -144,13 +232,16 @@ export async function createExpenseLine(
     })
     .returning();
 
-  return result;
+  if (input.customFields) {
+    await setExpenseLineCustomFields(result.id, input.customFields);
+  }
+  return { ...result, customFields: input.customFields ?? {} };
 }
 
 export async function getExpenseLineById(
   lineId: string,
   userId: string
-): Promise<ExpenseLine> {
+): Promise<ExpenseLineWithCustomFields> {
   const [result] = await db
     .select()
     .from(expenseLines)
@@ -177,7 +268,8 @@ export async function getExpenseLineById(
     }
   }
 
-  return result;
+  const customFieldsByLine = await getCustomFieldsForLines([result.id]);
+  return { ...result, customFields: customFieldsByLine.get(result.id) ?? {} };
 }
 
 export async function listExpenseLines(
@@ -185,7 +277,7 @@ export async function listExpenseLines(
   userId: string,
   params: PaginationParams,
   skipOwnershipCheck = false
-): Promise<{ lines: ExpenseLine[]; total: number }> {
+): Promise<{ lines: ExpenseLineWithCustomFields[]; total: number }> {
   if (!skipOwnershipCheck) {
     await verifyReportOwnership(reportId, userId);
   }
@@ -228,14 +320,17 @@ export async function listExpenseLines(
     db.select({ total: count() }).from(expenseLines).where(where),
   ]);
 
-  return { lines: rows, total };
+  const customFieldsByLine = await getCustomFieldsForLines(rows.map((r) => r.id));
+  const lines = rows.map((r) => ({ ...r, customFields: customFieldsByLine.get(r.id) ?? {} }));
+
+  return { lines, total };
 }
 
 export async function updateExpenseLine(
   lineId: string,
   userId: string,
   input: UpdateExpenseLineInput
-): Promise<ExpenseLine> {
+): Promise<ExpenseLineWithCustomFields> {
   const existing = await getExpenseLineById(lineId, userId);
 
   const updates: Partial<typeof expenseLines.$inferInsert> = {};
@@ -279,6 +374,10 @@ export async function updateExpenseLine(
   if (input.recurrencePattern !== undefined) updates.recurrencePattern = input.recurrencePattern;
   if (input.recurrenceMerchant !== undefined) updates.recurrenceMerchant = input.recurrenceMerchant;
 
+  if (input.customFields !== undefined) {
+    await setExpenseLineCustomFields(lineId, input.customFields);
+  }
+
   if (Object.keys(updates).length === 0) {
     return getExpenseLineById(lineId, userId);
   }
@@ -289,7 +388,8 @@ export async function updateExpenseLine(
     .where(eq(expenseLines.id, lineId))
     .returning();
 
-  return result;
+  const customFieldsByLine = await getCustomFieldsForLines([result.id]);
+  return { ...result, customFields: customFieldsByLine.get(result.id) ?? {} };
 }
 
 export async function deleteExpenseLine(lineId: string, userId: string): Promise<void> {
