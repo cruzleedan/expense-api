@@ -1,7 +1,7 @@
 ---
 id: 0019
 title: "Cascade-delete expense lines when their report is deleted"
-status: building
+status: shipped
 kind: fix
 opened: 2026-08-16
 decided: 2026-08-16
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-16 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | fix |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -101,6 +101,11 @@ here is actually unrecoverable.
   with delete-behavior options (cascade vs. block vs. leave existing data);
   user chose cascade going forward and requested the existing orphans be
   cleaned up too. Implemented and verified live the same session.
+- 2026-08-16 shipped — merged to `main` (PR #12), confirmed with
+  `git merge-base --is-ancestor` against `origin/main` and a content grep
+  for the cascade-delete comment on `origin/main`'s
+  `src/services/expenseReport.service.ts`, not just the PR's "Merged"
+  label.
 
 ---
 
