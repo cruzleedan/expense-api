@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 import {
   createExpenseCategory,
   getExpenseCategoryById,
@@ -74,6 +75,7 @@ const createRoute_ = createRoute({
   summary: 'Create expense category',
   description: 'Create a new expense category',
   security,
+  middleware: [requirePermission('category.create')] as const,
   request: {
     headers: AuthHeaderSchema,
     body: {
@@ -91,6 +93,10 @@ const createRoute_ = createRoute({
     },
     401: {
       description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
       content: { 'application/json': { schema: ErrorSchema } },
     },
     409: {
@@ -152,6 +158,7 @@ const updateRoute = createRoute({
   summary: 'Update expense category',
   description: 'Update an existing expense category',
   security,
+  middleware: [requirePermission('category.edit')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -170,6 +177,10 @@ const updateRoute = createRoute({
     },
     401: {
       description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
       content: { 'application/json': { schema: ErrorSchema } },
     },
     404: {
@@ -200,6 +211,7 @@ const deleteRoute = createRoute({
   summary: 'Delete expense category',
   description: 'Delete an expense category',
   security,
+  middleware: [requirePermission('category.delete')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -211,6 +223,10 @@ const deleteRoute = createRoute({
     },
     401: {
       description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
       content: { 'application/json': { schema: ErrorSchema } },
     },
     404: {
