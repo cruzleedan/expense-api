@@ -144,6 +144,10 @@ const createLineRoute = createRoute({
       description: 'Report not found',
       content: { 'application/json': { schema: ErrorSchema } },
     },
+    409: {
+      description: 'Report is no longer editable',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
   },
 });
 
@@ -191,6 +195,10 @@ const bulkCreateLineRoute = createRoute({
     },
     404: {
       description: 'Report not found or receipt not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    409: {
+      description: 'Report is no longer editable',
       content: { 'application/json': { schema: ErrorSchema } },
     },
   },
@@ -361,6 +369,10 @@ const updateLineRoute = createRoute({
       description: 'Not found',
       content: { 'application/json': { schema: ErrorSchema } },
     },
+    409: {
+      description: 'Report is no longer editable',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
   },
 });
 
@@ -402,6 +414,10 @@ const deleteLineRoute = createRoute({
     },
     404: {
       description: 'Not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    409: {
+      description: 'Report is no longer editable',
       content: { 'application/json': { schema: ErrorSchema } },
     },
   },

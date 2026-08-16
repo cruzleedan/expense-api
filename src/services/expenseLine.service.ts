@@ -1,7 +1,7 @@
 import { db } from '../db/drizzle.js';
 import { expenseLines, expenseReports, expenseCategories, receipts, receiptLineAssociations, expenseLineFieldValues } from '../db/schema.js';
 import type { ExpenseLine } from '../db/schema.js';
-import { NotFoundError, ForbiddenError, ValidationError } from '../types/index.js';
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../types/index.js';
 import { verifyReportOwnership } from './expenseReport.service.js';
 import { logger } from '../utils/logger.js';
 import { query } from '../db/client.js';
@@ -22,6 +22,33 @@ async function assertCategoryCodeExists(categoryCode: string | null | undefined)
   if (!category) {
     throw new ValidationError(`Unknown category code "${categoryCode}"`);
   }
+}
+
+// WORK-0022: once a report leaves draft (or is sent back via 'returned'),
+// its lines are locked — no create/attach/edit/delete. Allowlist, not a
+// denylist of "locked" statuses, so a future status added to
+// expense_reports.status's CHECK constraint is locked by default rather
+// than silently editable.
+const EDITABLE_REPORT_STATUSES = new Set(['draft', 'returned']);
+
+function assertEditableStatus(status: string | null): void {
+  if (status !== null && !EDITABLE_REPORT_STATUSES.has(status)) {
+    throw new ConflictError(
+      `Cannot modify expense line — report is "${status}" and no longer editable`
+    );
+  }
+}
+
+async function assertReportEditable(reportId: string | null): Promise<void> {
+  if (!reportId) return;
+
+  const [report] = await db
+    .select({ status: expenseReports.status })
+    .from(expenseReports)
+    .where(eq(expenseReports.id, reportId))
+    .limit(1);
+
+  assertEditableStatus(report?.status ?? null);
 }
 
 export type { ExpenseLine };
@@ -178,7 +205,8 @@ export async function createExpenseLine(
   reportId?: string
 ): Promise<ExpenseLineWithCustomFields> {
   if (reportId) {
-    await verifyReportOwnership(reportId, userId);
+    const report = await verifyReportOwnership(reportId, userId);
+    assertEditableStatus(report.status);
   }
   await assertCategoryCodeExists(input.categoryCode);
 
@@ -332,6 +360,7 @@ export async function updateExpenseLine(
   input: UpdateExpenseLineInput
 ): Promise<ExpenseLineWithCustomFields> {
   const existing = await getExpenseLineById(lineId, userId);
+  await assertReportEditable(existing.reportId);
 
   const updates: Partial<typeof expenseLines.$inferInsert> = {};
   if (input.reportId !== undefined && input.reportId !== existing.reportId) {
@@ -339,7 +368,8 @@ export async function updateExpenseLine(
       throw new ForbiddenError('Expense line is already attached to a report');
     }
     if (input.reportId !== null) {
-      await verifyReportOwnership(input.reportId, userId);
+      const report = await verifyReportOwnership(input.reportId, userId);
+      assertEditableStatus(report.status);
     }
     updates.reportId = input.reportId;
   }
@@ -393,7 +423,8 @@ export async function updateExpenseLine(
 }
 
 export async function deleteExpenseLine(lineId: string, userId: string): Promise<void> {
-  await getExpenseLineById(lineId, userId);
+  const existing = await getExpenseLineById(lineId, userId);
+  await assertReportEditable(existing.reportId);
 
   await db
     .update(expenseLines)
@@ -607,7 +638,8 @@ export async function bulkCreateExpenseLines(
   userId: string,
   lines: BulkCreateExpenseLineInput[]
 ): Promise<BulkCreateExpenseLineResult> {
-  await verifyReportOwnership(reportId, userId);
+  const report = await verifyReportOwnership(reportId, userId);
+  assertEditableStatus(report.status);
 
   const [reportRow] = await db
     .select({ currency: expenseReports.currency })
