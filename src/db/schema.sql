@@ -1723,6 +1723,11 @@ WHERE r.name = 'finance' AND p.name IN (
     'analytics.view', 'analytics.export',
     'project.view', 'project.view.all', 'project.create', 'project.edit',
     'policy.view', 'policy.create', 'policy.edit', 'policy.check',
+    -- WORK-0021: finance manages the shared expense category taxonomy.
+    -- admin/super_admin already get these automatically (see the
+    -- denylist/catch-all grants further down) — only finance needed an
+    -- explicit grant.
+    'category.create', 'category.edit', 'category.delete',
     -- LLM permissions for finance
     'llm.query', 'llm.query.all', 'llm.insights.view', 'llm.insights.generate',
     'llm.anomaly.view', 'llm.anomaly.review', 'llm.semantic_search',
