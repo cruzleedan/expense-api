@@ -13,6 +13,7 @@ import {
   customType,
   primaryKey,
   unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
@@ -419,7 +420,11 @@ export const expenseCategories = pgTable('expense_categories', {
   nameEmbedding: vector({ dimensions: 768 }),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
   updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
+}, (t) => [
+  // WORK-0020: case-insensitive uniqueness on name, trimmed — matches the
+  // mobile/web clients' own local dedup check (trim + lowercase).
+  uniqueIndex('expense_categories_name_unique_ci').on(sql`lower(trim(${t.name}))`),
+]);
 
 // ============================================================================
 // EXPENSE LINES
