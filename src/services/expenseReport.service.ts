@@ -375,14 +375,28 @@ export async function deleteExpenseReport(
 ): Promise<void> {
   await getExpenseReportById(reportId, userId, permissions_);
 
-  await db
-    .update(expenseReports)
-    .set({
-      deletedAt: sql`NOW()`,
-      updatedAt: sql`NOW()`,
-      version: sql`version + 1`,
-    })
-    .where(eq(expenseReports.id, reportId));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(expenseReports)
+      .set({
+        deletedAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+        version: sql`version + 1`,
+      })
+      .where(eq(expenseReports.id, reportId));
+
+    // Cascade: a deleted report's lines would otherwise be orphaned —
+    // still live and editable, but unreachable since they're only ever
+    // listed/reached through their (now-hidden) parent report.
+    await tx
+      .update(expenseLines)
+      .set({
+        deletedAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+        version: sql`version + 1`,
+      })
+      .where(and(eq(expenseLines.reportId, reportId), isNull(expenseLines.deletedAt)));
+  });
 }
 
 export async function verifyReportOwnership(
