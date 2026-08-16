@@ -1,6 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
+import { unlockAccount, deactivateAccount, reactivateAccount } from '../services/auth.service.js';
 import {
   createUser,
   getUserWithRoles,
@@ -268,6 +270,138 @@ const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   return c.json({ message: 'User deleted' }, 200);
 };
 usersRouter.openapi(deleteRoute, deleteHandler);
+
+// Unlock a locked user account
+const unlockRoute = createRoute({
+  method: 'post',
+  path: '/{id}/unlock',
+  tags: ['Users'],
+  summary: 'Unlock user',
+  description: 'Clear failed login attempts and lift an account lockout (admin only)',
+  security,
+  middleware: [requirePermission('user.unlock')] as const,
+  request: {
+    params: UuidParamSchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'User unlocked',
+      content: { 'application/json': { schema: UserWithRolesSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const unlockHandler: RouteHandler<typeof unlockRoute> = async (c) => {
+  const { id } = c.req.valid('param');
+
+  await unlockAccount(id);
+  const user = await getUserWithRoles(id);
+  const roles = await getUserRolesById(id);
+
+  return c.json({ ...user, roles: formatUserRoles(roles) } as any, 200);
+};
+usersRouter.openapi(unlockRoute, unlockHandler);
+
+// Deactivate a user account
+const deactivateRoute = createRoute({
+  method: 'post',
+  path: '/{id}/deactivate',
+  tags: ['Users'],
+  summary: 'Deactivate user',
+  description: 'Disable a user account and revoke all its active sessions (admin only)',
+  security,
+  middleware: [requirePermission('user.deactivate')] as const,
+  request: {
+    params: UuidParamSchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'User deactivated',
+      content: { 'application/json': { schema: UserWithRolesSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const deactivateHandler: RouteHandler<typeof deactivateRoute> = async (c) => {
+  const { id } = c.req.valid('param');
+
+  await deactivateAccount(id);
+  const user = await getUserWithRoles(id);
+  const roles = await getUserRolesById(id);
+
+  return c.json({ ...user, roles: formatUserRoles(roles) } as any, 200);
+};
+usersRouter.openapi(deactivateRoute, deactivateHandler);
+
+// Reactivate a user account
+const activateRoute = createRoute({
+  method: 'post',
+  path: '/{id}/activate',
+  tags: ['Users'],
+  summary: 'Activate user',
+  description: 'Re-enable a previously deactivated user account (admin only)',
+  security,
+  middleware: [requirePermission('user.deactivate')] as const,
+  request: {
+    params: UuidParamSchema,
+    headers: AuthHeaderSchema,
+  },
+  responses: {
+    200: {
+      description: 'User activated',
+      content: { 'application/json': { schema: UserWithRolesSchema } },
+    },
+    401: {
+      description: 'Unauthorized',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    403: {
+      description: 'Forbidden',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    404: {
+      description: 'Not found',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+const activateHandler: RouteHandler<typeof activateRoute> = async (c) => {
+  const { id } = c.req.valid('param');
+
+  await reactivateAccount(id);
+  const user = await getUserWithRoles(id);
+  const roles = await getUserRolesById(id);
+
+  return c.json({ ...user, roles: formatUserRoles(roles) } as any, 200);
+};
+usersRouter.openapi(activateRoute, activateHandler);
 
 // ============================================================================
 // USER ROLES ENDPOINTS
