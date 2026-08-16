@@ -63,10 +63,11 @@ export interface SafeUserWithRoles extends SafeUser {
 }
 
 function computeStatus(user: User): string {
-  if (user.is_active) return 'active';
+  if (!user.is_active) {
+    return user.is_verified ? 'inactive' : 'pending_verification';
+  }
   if (user.locked_until && user.locked_until > new Date()) return 'locked';
-  if (!user.is_verified) return 'pending_verification';
-  return 'inactive';
+  return 'active';
 }
 
 function toSafeUser(user: User): SafeUser {
@@ -221,10 +222,10 @@ export async function listUsers(
         spending_profile,
         llm_preferences,
         CASE
-          WHEN is_active THEN 'active'
+          WHEN NOT is_active AND is_verified = false THEN 'pending_verification'
+          WHEN NOT is_active THEN 'inactive'
           WHEN locked_until > NOW() THEN 'locked'
-          WHEN is_verified = false THEN 'pending_verification'
-          ELSE 'inactive'
+          ELSE 'active'
         END AS status,
         is_active,
         last_login_at,
