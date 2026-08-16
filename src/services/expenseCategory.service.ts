@@ -1,11 +1,31 @@
 import { db } from '../db/drizzle.js';
-import { expenseCategories } from '../db/schema.js';
+import { expenseCategories, expenseLines } from '../db/schema.js';
 import type { ExpenseCategory } from '../db/schema.js';
 import { NotFoundError, ConflictError } from '../types/index.js';
-import { eq, and, or, ilike, asc, desc, count, ne, type SQL } from 'drizzle-orm';
+import { eq, and, or, ilike, asc, desc, count, ne, sql, type SQL } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 
 export type { ExpenseCategory };
+
+// WORK-0020: the pre-check SELECTs below narrow the common case to a clean
+// 409 before hitting the DB, but two concurrent requests can both pass the
+// SELECT before either commits — the unique indexes on `code` and
+// `lower(trim(name))` are what actually stop the second write. This catches
+// that race and converts it to the same ConflictError, instead of letting
+// the raw Postgres unique-violation fall through to a generic 500.
+interface PossiblePgError extends Error {
+  code?: string;
+  constraint?: string;
+}
+
+function isUniqueViolation(error: unknown, constraint: string): boolean {
+  const pgError = error as PossiblePgError;
+  return (
+    error instanceof Error &&
+    pgError.code === '23505' &&
+    pgError.constraint === constraint
+  );
+}
 
 export interface CreateExpenseCategoryInput {
   name: string;
@@ -42,20 +62,39 @@ export async function createExpenseCategory(
     }
   }
 
-  const [result] = await db
-    .insert(expenseCategories)
-    .values({
-      name: input.name,
-      code: input.code ?? null,
-      description: input.description ?? null,
-      parentId: input.parentId ?? null,
-      keywords: input.keywords ?? null,
-      synonyms: input.synonyms ?? null,
-      typicalAmountRange: input.typicalAmountRange ?? null,
-    })
-    .returning();
+  const [existingName] = await db
+    .select({ id: expenseCategories.id })
+    .from(expenseCategories)
+    .where(sql`lower(trim(${expenseCategories.name})) = lower(trim(${input.name}))`)
+    .limit(1);
+  if (existingName) {
+    throw new ConflictError(`Category with name "${input.name}" already exists`);
+  }
 
-  return result;
+  try {
+    const [result] = await db
+      .insert(expenseCategories)
+      .values({
+        name: input.name,
+        code: input.code ?? null,
+        description: input.description ?? null,
+        parentId: input.parentId ?? null,
+        keywords: input.keywords ?? null,
+        synonyms: input.synonyms ?? null,
+        typicalAmountRange: input.typicalAmountRange ?? null,
+      })
+      .returning();
+
+    return result;
+  } catch (error) {
+    if (isUniqueViolation(error, 'expense_categories_code_key')) {
+      throw new ConflictError(`Category with code "${input.code}" already exists`);
+    }
+    if (isUniqueViolation(error, 'expense_categories_name_unique_ci')) {
+      throw new ConflictError(`Category with name "${input.name}" already exists`);
+    }
+    throw error;
+  }
 }
 
 export async function getExpenseCategoryById(
@@ -133,6 +172,22 @@ export async function updateExpenseCategory(
     }
   }
 
+  if (input.name !== undefined) {
+    const [conflict] = await db
+      .select({ id: expenseCategories.id })
+      .from(expenseCategories)
+      .where(
+        and(
+          sql`lower(trim(${expenseCategories.name})) = lower(trim(${input.name}))`,
+          ne(expenseCategories.id, categoryId)
+        )
+      )
+      .limit(1);
+    if (conflict) {
+      throw new ConflictError(`Category with name "${input.name}" already exists`);
+    }
+  }
+
   const updates: Partial<typeof expenseCategories.$inferInsert> = {};
   if (input.name !== undefined) updates.name = input.name;
   if (input.code !== undefined) updates.code = input.code;
@@ -147,13 +202,23 @@ export async function updateExpenseCategory(
     return getExpenseCategoryById(categoryId);
   }
 
-  const [result] = await db
-    .update(expenseCategories)
-    .set(updates)
-    .where(eq(expenseCategories.id, categoryId))
-    .returning();
+  try {
+    const [result] = await db
+      .update(expenseCategories)
+      .set(updates)
+      .where(eq(expenseCategories.id, categoryId))
+      .returning();
 
-  return result;
+    return result;
+  } catch (error) {
+    if (isUniqueViolation(error, 'expense_categories_code_key')) {
+      throw new ConflictError(`Category with code "${input.code}" already exists`);
+    }
+    if (isUniqueViolation(error, 'expense_categories_name_unique_ci')) {
+      throw new ConflictError(`Category with name "${input.name}" already exists`);
+    }
+    throw error;
+  }
 }
 
 export async function deleteExpenseCategory(categoryId: string): Promise<void> {
@@ -166,6 +231,28 @@ export async function deleteExpenseCategory(categoryId: string): Promise<void> {
 
   if (childCount > 0) {
     throw new ConflictError('Cannot delete category with child categories');
+  }
+
+  // WORK-0020: expense_lines.categoryId has an FK back to this table with
+  // no ON DELETE clause (default RESTRICT), but that only produced a raw,
+  // unhandled Postgres error (500) — this check turns it into a clean 409
+  // before the delete is attempted. Deliberately NOT filtering out
+  // soft-deleted lines here: a soft delete only sets deletedAt, it doesn't
+  // null out categoryId, so the FK reference (and the RESTRICT it enforces)
+  // is still physically live regardless of deletedAt. Filtering by
+  // isNull(deletedAt) was tried and verified live to let a soft-deleted
+  // line's category through this check only for the actual DELETE to still
+  // hit the same raw 500 — this count has to match what the FK constraint
+  // actually sees, not what the UI considers "in use."
+  const [{ lineCount }] = await db
+    .select({ lineCount: count() })
+    .from(expenseLines)
+    .where(eq(expenseLines.categoryId, categoryId));
+
+  if (lineCount > 0) {
+    throw new ConflictError(
+      `Cannot delete category — in use by ${lineCount} expense line${lineCount === 1 ? '' : 's'}`
+    );
   }
 
   await db.delete(expenseCategories).where(eq(expenseCategories.id, categoryId));

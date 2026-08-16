@@ -1027,6 +1027,11 @@ CREATE INDEX IF NOT EXISTS idx_expense_reports_deleted_at ON expense_reports(del
 CREATE INDEX IF NOT EXISTS idx_expense_categories_active ON expense_categories(is_active);
 CREATE INDEX IF NOT EXISTS idx_expense_categories_code ON expense_categories(code);
 
+-- WORK-0020: case-insensitive uniqueness on name, trimmed. Confirmed zero
+-- existing duplicates in prod data at migration time (2026-08-16), so no
+-- backfill/cleanup step was needed before adding this.
+CREATE UNIQUE INDEX IF NOT EXISTS expense_categories_name_unique_ci ON expense_categories(lower(trim(name)));
+
 -- Expense line indexes
 CREATE INDEX IF NOT EXISTS idx_expense_lines_report_id ON expense_lines(report_id);
 CREATE INDEX IF NOT EXISTS idx_expense_lines_category_code ON expense_lines(category_code);
