@@ -1,7 +1,7 @@
 ---
 id: 0018
 title: "Admin endpoints to unlock and deactivate/reactivate user accounts"
-status: building
+status: shipped
 kind: feature
 opened: 2026-08-16
 decided: 2026-08-16
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-16 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -113,6 +113,10 @@ take precedence over a stale lock on an already-deactivated account.
   `deactivateAccount()`/`reactivateAccount()` in the same orphaned state,
   with matching frontend client code already stubbed. Implemented and
   verified live the same way.
+- 2026-08-16 shipped — merged to `main` (PR #11), confirmed with
+  `git merge-base --is-ancestor` against `origin/main` and a content grep
+  for the `/unlock`/`/deactivate`/`/activate` routes on `origin/main`'s
+  `src/routes/users.ts`, not just the PR's "Merged" label.
 
 ---
 
