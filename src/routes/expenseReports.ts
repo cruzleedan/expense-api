@@ -45,7 +45,7 @@ const listRoute = createRoute({
   path: '/',
   tags: ['Expense Reports'],
   summary: 'List expense reports',
-  description: 'Get paginated list of expense reports for the authenticated user',
+  description: "Get paginated list of expense reports. Defaults to the authenticated user's own reports (scope=own); scope=team|department|all broadens access and requires the matching report.view.{scope} permission.",
   security,
   request: {
     query: ExpenseReportListQuerySchema,
@@ -60,12 +60,20 @@ const listRoute = createRoute({
       description: 'Unauthorized',
       content: { 'application/json': { schema: ErrorSchema } },
     },
+    403: {
+      description: 'Forbidden — caller lacks the permission required for the requested scope',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
   },
 });
 
 const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   const userId = getUserId(c);
   const query = c.req.valid('query');
+
+  // Get user permissions from JWT if available
+  const jwtUser = getUser(c) as unknown as JwtPayloadV3;
+  const permissions = jwtUser?.permissions || [];
 
   const paginationParams = {
     page: query.page,
@@ -79,7 +87,9 @@ const listHandler: RouteHandler<typeof listRoute> = async (c) => {
     userId,
     paginationParams,
     query.status,
-    query.updatedSince
+    query.updatedSince,
+    query.scope,
+    permissions
   );
 
   const serialized = serializeReports(reports);

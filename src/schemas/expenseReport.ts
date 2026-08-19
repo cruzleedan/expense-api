@@ -103,6 +103,13 @@ export const ExpenseReportListQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
   limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
   status: ExpenseReportStatusSchema.optional(),
+  // WORK-0023: explicit, client-controlled scope. Defaults to 'own' — identical to
+  // pre-WORK-0023 behavior. 'team'/'department'/'all' require the caller to hold the
+  // matching report.view.{scope} permission, or the request is rejected with 403.
+  scope: z.enum(['own', 'team', 'department', 'all']).default('own').openapi({
+    example: 'team',
+    description: "Access scope: 'own' (default), 'team' (direct + indirect reports, recursive), 'department', or 'all'. Requires the matching report.view.{scope} permission for anything other than 'own'; returns 403 if the caller lacks it.",
+  }),
   search: z.string().max(255).optional().openapi({ example: 'quarterly', description: 'Search in title and description' }),
   sortBy: ExpenseReportSortBySchema.optional().openapi({ example: 'createdAt', description: 'Field to sort by' }),
   sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),

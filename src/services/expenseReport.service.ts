@@ -227,15 +227,78 @@ export async function getExpenseReportById(
   return { ...toResponse(report, computedTotal), customFields: customFieldsByReport.get(report.id) ?? {} };
 }
 
+// WORK-0023: explicit scope filter for the report list endpoint, mirroring
+// canAccessReport's own/team/department/all dimensions (approval.service.ts:177+).
+// 'team' is resolved recursively (direct + indirect reports), not just direct.
+export type ReportListScope = 'own' | 'team' | 'department' | 'all';
+
+async function getSubordinateUserIds(managerId: string): Promise<string[]> {
+  const result = await query<{ id: string }>(
+    `WITH RECURSIVE subordinates AS (
+       SELECT id, manager_id, 1 as depth FROM users WHERE manager_id = $1
+       UNION ALL
+       SELECT u.id, u.manager_id, s.depth + 1
+       FROM users u
+       JOIN subordinates s ON u.manager_id = s.id
+       WHERE s.depth < 20
+     )
+     SELECT id FROM subordinates`,
+    [managerId]
+  );
+  return result.rows.map((r) => r.id);
+}
+
+async function getUserDepartmentId(userId: string): Promise<string | null> {
+  const result = await query<{ department_id: string | null }>(
+    `SELECT department_id FROM users WHERE id = $1`,
+    [userId]
+  );
+  return result.rows[0]?.department_id ?? null;
+}
+
+// Resolves the requested scope into a WHERE condition, rejecting with 403 if
+// the caller lacks the matching report.view.{scope} permission. 'own' needs no
+// permission check so the no-param default stays identical to pre-WORK-0023
+// behavior for every caller.
+async function buildScopeCondition(
+  userId: string,
+  scope: ReportListScope,
+  permissions: string[]
+): Promise<SQL | undefined> {
+  if (scope === 'own') {
+    return eq(expenseReports.userId, userId);
+  }
+
+  const requiredPermission = `report.view.${scope}`;
+  if (!new Set(permissions).has(requiredPermission)) {
+    throw new ForbiddenError(`Requires ${requiredPermission} permission to use scope=${scope}`);
+  }
+
+  if (scope === 'all') {
+    return undefined;
+  }
+
+  if (scope === 'team') {
+    const subordinateIds = await getSubordinateUserIds(userId);
+    return subordinateIds.length > 0 ? inArray(expenseReports.userId, subordinateIds) : sql`false`;
+  }
+
+  // department
+  const departmentId = await getUserDepartmentId(userId);
+  return departmentId ? eq(expenseReports.departmentId, departmentId) : sql`false`;
+}
+
 export async function listExpenseReports(
   userId: string,
   params: PaginationParams,
   status?: string,
-  updatedSince?: string
+  updatedSince?: string,
+  scope: ReportListScope = 'own',
+  permissions: string[] = []
 ): Promise<{ reports: ExpenseReportWithCustomFields[]; total: number }> {
   const isIncrementalSync = !!updatedSince;
 
-  const conditions: (SQL | undefined)[] = [eq(expenseReports.userId, userId)];
+  const conditions: (SQL | undefined)[] = [await buildScopeCondition(userId, scope, permissions)];
 
   if (isIncrementalSync) {
     conditions.push(gt(expenseReports.updatedAt, updatedSince!));
