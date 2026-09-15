@@ -146,9 +146,14 @@ Verification includes:
   a central matrix or prevent every form of permission delegation.
 - WORK-0027's production credential rotation and public-exposure access-log
   review remain mandatory incident-response gates; neither was performed here.
-- WORK-0045 and WORK-0030 remain proposed. The new production image build reports
-  four dependency vulnerabilities (two moderate, one high, one critical),
-  unchanged from WORK-0029. This fix does not remediate or accept that risk.
+- WORK-0030 remains proposed. The four dependency findings present at this
+  deployment were resolved by
+  [WORK-0045](0045-remediate-dependencies-and-establish-release-quality-gates.md)
+  on 2026-09-15: fresh production/development audits report zero vulnerabilities,
+  the API-only image is deployed, and the catalog/version/operator audit are
+  preserved. WORK-0045's infrastructure scope is shipped after approved transfer
+  of full matrix/money/sync/job coverage to still-proposed WORK-0040/0034/0041;
+  the incident and client gates above are unchanged.
 - Project-local context verification passes. The previously recorded shared
   validator taxonomy mismatch remains; no framework expansion is part of this
   work. Health/smoke checks demonstrate a running deployment, not sustained
@@ -203,6 +208,11 @@ Verification includes:
   registration 403, application cap 413, and the Caddy streaming cap 413.
 - 2026-09-15 shipped — compliant administrator catalog, audited atomic data
   migration, API regressions, deployment evidence, and outstanding gates recorded.
+- 2026-09-15 follow-up — WORK-0045 resolved the dependency findings without
+  changing production catalog grants, user versions/assignments, or operator audit.
+- 2026-09-15 scope follow-up — WORK-0045 shipped its infrastructure scope under
+  the approved coverage transfer; incident/client gates and proposed broader ERP
+  behavior/coverage owners remain unchanged.
 
 ---
 

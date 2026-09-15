@@ -77,10 +77,32 @@ how to represent refunds, credits, tips, and tax-inclusive values.
 - [ ] Database constraints enforce non-null owner and report-owner consistency.
 - [ ] Tests cover foreign client IDs, ghost rows, association errors, negatives,
       rounding, duplicate retries, and concurrent submissions.
+- [ ] Exact monetary rounding/boundary tests follow the accepted currency/tax/rate
+      semantics across single, bulk, update, sync, and parser ingestion and run
+      as mandatory CI/release checks, not optional skipped suites.
+- [ ] Isolated PostgreSQL owner-scoped sync-race and concurrent retry tests prove
+      cross-user client IDs cannot expose/reuse another owner's data and duplicate
+      submissions cannot create duplicate or unreported lines; CI/release checks
+      require these tests.
+
+## Release coverage transferred from WORK-0045
+
+On 2026-09-15 the user approved moving the exact-money rounding and owner-scoped
+sync-race gates from
+[WORK-0045](0045-remediate-dependencies-and-establish-release-quality-gates.md)
+to this item. The unchecked criteria above preserve that coverage obligation;
+use the shared [release-quality procedure](../reference/release-quality-gates.md)
+and isolated test-database runner when implementing it. WORK-0045's passing
+infrastructure gates do not satisfy these tests. This transfer approves coverage
+ownership only: this item remains `proposed`, and monetary/batch semantics and
+implementation still require explicit approval.
 
 ## Log
 
 - 2026-09-14 proposed — confirmed during line and offline-idempotency audit.
+- 2026-09-15 coverage transferred — user approved moving WORK-0045's exact-money
+  rounding and owner-scoped sync-race release gates here. Added unchecked mandatory
+  CI/concurrency acceptance criteria; no behavior implemented or design approved.
 
 ---
 

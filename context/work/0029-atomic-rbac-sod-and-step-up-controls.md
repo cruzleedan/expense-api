@@ -152,9 +152,12 @@ critical flags, and added the guarded check constraint.
   on 2026-09-15 with a compliant allowlist and audited transactional migration.
 - WORK-0027's public-exposure log review and production credential rotation
   remain mandatory incident-response gates. No credentials were rotated here.
-- WORK-0045 remains proposed. The production image build still reports four
-  dependency vulnerabilities (two moderate, one high, one critical); this item
-  does not remediate or accept that release risk.
+- The four dependency findings present at this deployment were remediated by
+  [WORK-0045](0045-remediate-dependencies-and-establish-release-quality-gates.md)
+  on 2026-09-15: fresh production/development audits report zero vulnerabilities
+  and the dependency-only API image is deployed. WORK-0045's infrastructure scope
+  is shipped following the approved coverage transfer to still-proposed
+  WORK-0034/0040/0041; incident and client gates above are not closed by that rollout.
 - Health/smoke evidence establishes a running deployment, not sustained
   production operation or release readiness. In-flight non-RBAC requests that
   already passed authorization are not cancelled by a role change.
@@ -197,6 +200,11 @@ critical flags, and added the guarded check constraint.
   database-tested, schema-applied, deployed, and smoke-verified. Client
   coordination, incident actions, and dependency release gates remain open;
   changes are not committed yet.
+- 2026-09-15 follow-up — WORK-0045 resolved the previously recorded dependency
+  findings with a verified API-only rollout; remaining release gates updated.
+- 2026-09-15 scope follow-up — WORK-0045 shipped its infrastructure scope after
+  user-approved transfer of full matrix/money/sync/job coverage to proposed owners;
+  this does not close the incident-response or client/provider-assurance gates.
 
 ---
 

@@ -72,10 +72,30 @@ actions and whether broader report scope automatically grants nested-resource vi
 - [ ] Server URL and paths compose to one `/v1` prefix.
 - [ ] CI rejects undefined security refs and missing route security metadata.
 - [ ] Matrix tests cover anonymous and each standard role/scope, including denials.
+- [ ] The reviewed route/action/role/resource matrix drives mandatory CI/release
+      regressions for allowed and denied anonymous/standard-role requests across
+      owned, team, all, and nested-resource scopes; coverage cannot be replaced
+      by the anonymous route-family baseline or left as optional skipped tests.
+
+## Release coverage transferred from WORK-0045
+
+On 2026-09-15 the user approved moving full authorization-matrix release coverage
+from [WORK-0045](0045-remediate-dependencies-and-establish-release-quality-gates.md)
+to this item. Its infrastructure gates cover shipped policies, RBAC transactions,
+anonymous route families, and structural OpenAPI/contract parity only; they do
+not repair the authorization/security-scheme/base-prefix defects above. The
+unchecked matrix/mandatory CI criteria here retain the full coverage obligation.
+Use the [shared release-quality procedure](../reference/release-quality-gates.md)
+and deliberately review any OpenAPI baseline changes with affected clients.
+This is coverage ownership approval only: this item remains `proposed`, with
+capability/scope decisions and implementation requiring explicit approval.
 
 ## Log
 
 - 2026-09-14 proposed — confirmed through route inventory and generated-spec probe.
+- 2026-09-15 coverage transferred — user approved moving WORK-0045's full
+  authorization-matrix release gate here. Added unchecked mandatory role/resource
+  CI coverage; no runtime authorization or capability design implicitly approved.
 
 ---
 

@@ -454,9 +454,19 @@ When `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_BUCKET` are set, the S3 provider
 ```bash
 npm run dev      # Start development server with hot reload (tsx watch)
 npm run build    # Compile TypeScript to JavaScript
+npm run check    # Convention lint/typecheck, regression tests, and OpenAPI contract
+npm run verify:security # Fail on production high/critical dependency advisories
+npm run test:postgres   # Explicit TEST_DATABASE_URL; isolated disposable databases
 npm run start    # Start production server (dist/index.js)
 npm run db:init  # Initialize schema and seed users
 ```
+
+CI runs repository/security checks, isolated PostgreSQL 16/pgvector regressions,
+and an audited production-image build with an embedded CycloneDX SBOM.
+For clean-container verification, dependency updates, contract review, and safe
+rollout/rollback, see [release quality gates](context/reference/release-quality-gates.md).
+The known broader money/sync/job/authorization gaps remain separately tracked;
+passing these checks is not complete ERP release assurance.
 
 ## Dev Container Setup
 ```bash

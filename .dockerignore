@@ -5,6 +5,5 @@ dist
 .env.*
 !.env.example
 uploads
-context
 coverage
 *.log

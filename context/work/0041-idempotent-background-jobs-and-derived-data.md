@@ -69,10 +69,29 @@ locking strategy, and whether expensive LLM work needs a durable queue later.
 - [ ] All materialized views are refreshed according to an explicit plan.
 - [ ] Spending summaries and project spent values have implemented, reconciled writers.
 - [ ] Multi-worker, retry, crash, overlap, and backfill tests exist.
+- [ ] Isolated multi-worker/overlap/retry/crash/backfill regressions prove scheduled
+      execution and persisted insight/anomaly outputs remain idempotent, including
+      failure propagation and recovery; these are mandatory CI/release checks,
+      not optional skipped tests.
+
+## Release coverage transferred from WORK-0045
+
+On 2026-09-15 the user approved moving the multi-worker job-idempotency gate from
+[WORK-0045](0045-remediate-dependencies-and-establish-release-quality-gates.md)
+to this item. The unchecked tests/mandatory CI criteria above retain that
+coverage; WORK-0045's passing infrastructure gates do not demonstrate safe
+multi-replica jobs. Use the
+[shared release-quality procedure](../reference/release-quality-gates.md) for
+isolated PostgreSQL verification. This transfer approves coverage ownership only:
+the item remains `proposed`, and scheduler/recovery/output semantics and any
+worker deployment require explicit approval before implementation.
 
 ## Log
 
 - 2026-09-14 proposed — confirmed during scheduler/derived-data audit.
+- 2026-09-15 coverage transferred — user approved moving WORK-0045's multi-worker
+  idempotency release gate here. Added unchecked mandatory CI/output-deduplication
+  acceptance criteria; no job architecture or implementation implicitly approved.
 
 ---
 

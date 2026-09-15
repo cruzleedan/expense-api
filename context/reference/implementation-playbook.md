@@ -67,6 +67,12 @@ For dependency changes, check `node_modules` ownership before using the host
 installation. Prefer `npm ci` in a clean container or CI environment when the
 host tree is stale or owned by another user.
 
+For repeatable dependency/lockfile updates, clean-container verification,
+disposable PostgreSQL suites, OpenAPI baseline review, and production audit/SBOM
+checks, use [release quality gates](release-quality-gates.md). That procedure
+records npm's hidden-lockfile bind-mount and post-prune SBOM pitfalls; do not
+rediscover or bypass them with host ownership changes or stale build-layer audits.
+
 ## 4. Verify incrementally
 
 Use the cheapest useful feedback first:
