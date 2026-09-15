@@ -19,10 +19,13 @@ const SAME_DEPARTMENT_THRESHOLD = 1000;
  */
 export async function canApproveReport(
   approverId: string,
-  reportId: string
+  reportId: string,
+  client?: { query: typeof query }
 ): Promise<SelfApprovalCheckResult> {
+  const queryFn: typeof query = client ? client.query.bind(client) : db.query.bind(db);
+
   // Get report details with submitter info
-  const reportResult = await db.query<{
+  const reportResult = await queryFn<{
     user_id: string;
     submitter_email: string;
     department_id: string | null;
@@ -32,7 +35,7 @@ export async function canApproveReport(
     `SELECT er.user_id, u.email as submitter_email, er.department_id, er.total_amount, er.created_at
      FROM expense_reports er
      JOIN users u ON er.user_id = u.id
-     WHERE er.id = $1`,
+     WHERE er.id = $1 AND er.deleted_at IS NULL`,
     [reportId]
   );
 
@@ -61,7 +64,7 @@ export async function canApproveReport(
   // resets the approval cycle and allows the same approvers to re-review.
   // TODO: Add a workflow-level setting (e.g. `on_revise_approver_policy: 'allow_same' | 'require_different'`)
   // to let system admins choose whether the same approver can re-review after revision.
-  const previousActionResult = await db.query<{ action: string; created_at: Date }>(
+  const previousActionResult = await queryFn<{ action: string; created_at: Date }>(
     `SELECT action, created_at FROM approval_history
      WHERE report_id = $1 AND actor_id = $2
        AND action != 'revise'
@@ -92,7 +95,7 @@ export async function canApproveReport(
   // Check 3: Same department/cost center rules for high-value reports
   const amount = report.total_amount ? parseFloat(report.total_amount) : 0;
   if (amount > SAME_DEPARTMENT_THRESHOLD && report.department_id) {
-    const approverResult = await db.query<{ department_id: string | null }>(
+    const approverResult = await queryFn<{ department_id: string | null }>(
       `SELECT department_id FROM users WHERE id = $1`,
       [approverId]
     );
@@ -117,7 +120,7 @@ export async function canApproveReport(
   }
 
   // Check 4: Circular approval detection (A approved B's report recently, B can't approve A's)
-  const circularResult = await db.query<{ approver_report_count: string }>(
+  const circularResult = await queryFn<{ approver_report_count: string }>(
     `SELECT COUNT(*) as approver_report_count
      FROM approval_history ah
      JOIN expense_reports er ON ah.report_id = er.id
@@ -144,7 +147,7 @@ export async function canApproveReport(
 
   // Check 5: Manager-subordinate relationship (approver should be in submitter's reporting chain)
   // This is a soft check - we log it but don't block
-  const managerCheckResult = await db.query<{ is_manager: boolean }>(
+  const managerCheckResult = await queryFn<{ is_manager: boolean }>(
     `WITH RECURSIVE manager_chain AS (
        SELECT id, manager_id, 1 as depth
        FROM users
@@ -191,7 +194,7 @@ export async function canAccessReport(
     user_id: string;
     department_id: string | null;
   }>(
-    `SELECT user_id, department_id FROM expense_reports WHERE id = $1`,
+    `SELECT user_id, department_id FROM expense_reports WHERE id = $1 AND deleted_at IS NULL`,
     [reportId]
   );
 
@@ -297,9 +300,7 @@ export async function getApprovalHistory(reportId: string): Promise<ApprovalHist
  * Get pending approvals for a user (reports waiting for their approval)
  */
 export async function getPendingApprovalsForUser(
-  userId: string,
-  userRoles: string[],
-  _managerId?: string
+  userId: string
 ): Promise<Array<{
   report_id: string;
   title: string;
@@ -314,14 +315,6 @@ export async function getPendingApprovalsForUser(
   current_step: number | null;
   total_steps: number;
 }>> {
-  // This is a simplified implementation - in production, this would need to
-  // consider the actual workflow step assignments
-
-  // Get reports where:
-  // 1. Status is 'submitted' or 'pending'
-  // 2. User is either the assigned approver OR has the required role for current step
-  // 3. User hasn't already acted on the report
-
   const result = await db.query<{
     report_id: string;
     title: string;
@@ -345,6 +338,7 @@ export async function getPendingApprovalsForUser(
      FROM expense_reports er
      JOIN users u ON er.user_id = u.id
      WHERE er.status IN ('submitted', 'pending')
+       AND er.deleted_at IS NULL
        AND er.user_id != $1  -- Not own reports
        AND NOT EXISTS (
          SELECT 1 FROM approval_history ah
@@ -355,18 +349,14 @@ export async function getPendingApprovalsForUser(
              '1970-01-01'::timestamptz
            )
        )
-       AND (
-         -- User is direct manager of submitter
-         u.manager_id = $1
-         -- OR user has approver role and is in the same department
-         OR (
-           $2 = true AND u.department_id IN (
-             SELECT department_id FROM users WHERE id = $1
-           )
-         )
+       AND EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements(COALESCE(er.workflow_snapshot->'steps', '[]'::jsonb)) step
+         WHERE (step->>'step_number')::integer = er.current_step
+           AND COALESCE(step->'eligible_user_ids', '[]'::jsonb) ? $1
        )
      ORDER BY er.submitted_at ASC`,
-    [userId, userRoles.includes('approver')]
+    [userId]
   );
 
   return result.rows;
@@ -379,16 +369,15 @@ export async function getPendingApprovalsForUser(
  */
 export async function isReportPendingApprovalByUser(
   reportId: string,
-  userId: string,
-  userRoles: string[]
+  userId: string
 ): Promise<boolean> {
   const result = await db.query<{ exists: boolean }>(
     `SELECT EXISTS (
       SELECT 1
       FROM expense_reports er
-      JOIN users u ON er.user_id = u.id
-      WHERE er.id = $3
+      WHERE er.id = $2
         AND er.status IN ('submitted', 'pending')
+        AND er.deleted_at IS NULL
         AND er.user_id != $1
         AND NOT EXISTS (
           SELECT 1 FROM approval_history ah
@@ -399,16 +388,14 @@ export async function isReportPendingApprovalByUser(
               '1970-01-01'::timestamptz
             )
         )
-        AND (
-          u.manager_id = $1
-          OR (
-            $2 = true AND u.department_id IN (
-              SELECT department_id FROM users WHERE id = $1
-            )
-          )
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(er.workflow_snapshot->'steps', '[]'::jsonb)) step
+          WHERE (step->>'step_number')::integer = er.current_step
+            AND COALESCE(step->'eligible_user_ids', '[]'::jsonb) ? $1
         )
     ) as exists`,
-    [userId, userRoles.includes('approver'), reportId]
+    [userId, reportId]
   );
 
   return result.rows[0]?.exists ?? false;
@@ -427,9 +414,10 @@ export async function canSubmitReport(
     total_amount: string | null;
   }>(
     `SELECT user_id, status,
-            (SELECT COALESCE(SUM(amount), 0) FROM expense_lines WHERE report_id = er.id) as total_amount
+            (SELECT COALESCE(SUM(amount), 0) FROM expense_lines
+             WHERE report_id = er.id AND deleted_at IS NULL) as total_amount
      FROM expense_reports er
-     WHERE id = $1`,
+     WHERE id = $1 AND deleted_at IS NULL`,
     [reportId]
   );
 
@@ -451,7 +439,7 @@ export async function canSubmitReport(
 
   // Must have at least one expense line
   const lineCountResult = await db.query<{ count: string }>(
-    `SELECT COUNT(*) as count FROM expense_lines WHERE report_id = $1`,
+    `SELECT COUNT(*) as count FROM expense_lines WHERE report_id = $1 AND deleted_at IS NULL`,
     [reportId]
   );
 

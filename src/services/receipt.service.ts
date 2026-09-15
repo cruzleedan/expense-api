@@ -16,6 +16,7 @@ import {
 } from '../utils/pagination.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { detectReceiptMimeType } from '../utils/fileSignature.js';
 
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -59,6 +60,15 @@ export async function uploadReceipt(
 
   if (input.file.length > env.MAX_FILE_SIZE) {
     throw new ValidationError(`File too large. Maximum size: ${env.MAX_FILE_SIZE / 1024 / 1024}MB`);
+  }
+
+  if (input.file.length === 0) {
+    throw new ValidationError('Receipt file cannot be empty');
+  }
+
+  const detectedMimeType = detectReceiptMimeType(input.file);
+  if (!detectedMimeType || detectedMimeType !== input.mimeType) {
+    throw new ValidationError('File content does not match the declared receipt type');
   }
 
   const fileHash = sha256(input.file);
@@ -342,7 +352,23 @@ export async function requestUploadUrl(
 
   const presigned = await storage.getPresignedUploadUrl(input.fileName, {
     contentType: input.mimeType,
+    contentLength: input.fileSize,
   });
+
+  await query(
+    `INSERT INTO pending_receipt_uploads
+       (user_id, storage_key, line_id, file_name, mime_type, expected_size, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      userId,
+      presigned.key,
+      input.lineId ?? null,
+      input.fileName,
+      input.mimeType,
+      input.fileSize,
+      presigned.expiresAt,
+    ]
+  );
 
   logger.info('Presigned upload URL generated', { lineId: input.lineId ?? null, key: presigned.key });
 
@@ -356,74 +382,193 @@ export async function requestUploadUrl(
 export interface ConfirmUploadInput {
   lineId?: string;
   key: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
-  fileHash: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  fileHash?: string;
   icr?: boolean;
+}
+
+interface PendingReceiptUpload {
+  id: string;
+  user_id: string;
+  storage_key: string;
+  line_id: string | null;
+  file_name: string;
+  mime_type: string;
+  expected_size: number;
+  expires_at: Date;
+  consumed_at: Date | null;
+}
+
+async function discardPendingUpload(pending: PendingReceiptUpload): Promise<void> {
+  await query(
+    `UPDATE pending_receipt_uploads
+     SET consumed_at = COALESCE(consumed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [pending.id]
+  );
+
+  try {
+    await getStorage().delete(pending.storage_key);
+  } catch (error) {
+    logger.warn('Failed to remove rejected pending receipt object', {
+      pendingUploadId: pending.id,
+      error,
+    });
+  }
 }
 
 export async function confirmUpload(
   userId: string,
   input: ConfirmUploadInput
 ): Promise<UploadReceiptResult> {
-  if (input.lineId) {
-    const lineResult = await query<{ user_id: string }>(
-      'SELECT user_id FROM expense_lines WHERE id = $1 AND deleted_at IS NULL',
-      [input.lineId]
-    );
-    if (lineResult.rows.length === 0) throw new NotFoundError('Expense line');
-    if (lineResult.rows[0].user_id !== userId) throw new ForbiddenError('Access denied to this expense line');
-  }
-
-  if (!ALLOWED_MIME_TYPES.includes(input.mimeType)) {
-    throw new ValidationError(
-      `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
-    );
-  }
-
-  // Check for duplicate by hash
-  const existingResult = await query<{ id: string }>(
-    'SELECT id FROM receipts WHERE file_hash = $1',
-    [input.fileHash]
+  const pendingResult = await query<PendingReceiptUpload>(
+    `SELECT * FROM pending_receipt_uploads
+     WHERE storage_key = $1 AND user_id = $2`,
+    [input.key, userId]
   );
+  if (pendingResult.rows.length === 0) {
+    throw new ValidationError('Upload capability is invalid or belongs to another user');
+  }
 
-  if (existingResult.rows.length > 0) {
-    // Delete the uploaded file since it's a duplicate
-    const storage = getStorage();
-    await storage.delete(input.key);
+  const pending = pendingResult.rows[0];
+  if (pending.consumed_at) {
+    throw new ConflictError('Upload capability has already been consumed');
+  }
+  if (new Date(pending.expires_at).getTime() <= Date.now()) {
+    await discardPendingUpload(pending);
+    throw new ValidationError('Upload capability has expired');
+  }
+
+  const mismatchedHint =
+    (input.lineId !== undefined && input.lineId !== pending.line_id) ||
+    (input.fileName !== undefined && input.fileName !== pending.file_name) ||
+    (input.mimeType !== undefined && input.mimeType !== pending.mime_type) ||
+    (input.fileSize !== undefined && input.fileSize !== pending.expected_size);
+  if (mismatchedHint) {
+    throw new ValidationError('Confirmation metadata does not match the upload request');
+  }
+
+  const storage = getStorage();
+  let fileBuffer: Buffer;
+  try {
+    fileBuffer = await storage.get(pending.storage_key);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new ValidationError('File not found in storage. Upload may have failed.');
+    }
+    throw error;
+  }
+
+  if (fileBuffer.length !== pending.expected_size || fileBuffer.length > env.MAX_FILE_SIZE) {
+    await discardPendingUpload(pending);
+    throw new ValidationError('Stored file size does not match the authorized upload size');
+  }
+
+  const detectedMimeType = detectReceiptMimeType(fileBuffer);
+  if (!detectedMimeType || detectedMimeType !== pending.mime_type) {
+    await discardPendingUpload(pending);
+    throw new ValidationError('Stored file content does not match the authorized receipt type');
+  }
+
+  const fileHash = sha256(fileBuffer);
+  if (input.fileHash !== undefined && input.fileHash.toLowerCase() !== fileHash) {
+    await discardPendingUpload(pending);
+    throw new ValidationError('Stored file hash does not match the confirmation hint');
+  }
+
+  // Move verified bytes to a fresh server-owned key. The original presigned URL
+  // may remain valid until expiry, so its key must never become permanent evidence.
+  const finalStorageKey = await storage.save(fileBuffer, pending.file_name);
+
+  let transactionResult: { receipt?: Receipt; duplicate: boolean };
+  try {
+    transactionResult = await transaction(async (client) => {
+      const lockedPending = await client.query<PendingReceiptUpload>(
+        `SELECT * FROM pending_receipt_uploads
+         WHERE id = $1 AND user_id = $2
+         FOR UPDATE`,
+        [pending.id, userId]
+      );
+      const current = lockedPending.rows[0];
+      if (!current || current.consumed_at || new Date(current.expires_at).getTime() <= Date.now()) {
+        throw new ConflictError('Upload capability is no longer valid');
+      }
+
+      const existingResult = await client.query<{ id: string }>(
+        'SELECT id FROM receipts WHERE file_hash = $1',
+        [fileHash]
+      );
+
+      if (existingResult.rows.length > 0) {
+        await client.query(
+          `UPDATE pending_receipt_uploads
+           SET consumed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [current.id]
+        );
+        return { duplicate: true };
+      }
+
+      const result = await client.query<Receipt>(
+        `INSERT INTO receipts (user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          userId,
+          finalStorageKey,
+          current.file_name,
+          fileHash,
+          detectedMimeType,
+          fileBuffer.length,
+          null,
+        ]
+      );
+
+      if (current.line_id) {
+        await client.query(
+          `INSERT INTO receipt_line_associations (receipt_id, line_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [result.rows[0].id, current.line_id]
+        );
+      }
+
+      await client.query(
+        `UPDATE pending_receipt_uploads
+         SET consumed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [current.id]
+      );
+
+      return { receipt: result.rows[0], duplicate: false };
+    });
+  } catch (error) {
+    await storage.delete(finalStorageKey).catch((cleanupError) => {
+      logger.warn('Failed to clean up uncommitted receipt object', { finalStorageKey, cleanupError });
+    });
+    throw error;
+  }
+
+  await storage.delete(pending.storage_key).catch((error) => {
+    logger.warn('Failed to clean up consumed pending receipt object', {
+      pendingUploadId: pending.id,
+      error,
+    });
+  });
+
+  if (transactionResult.duplicate || !transactionResult.receipt) {
+    await storage.delete(finalStorageKey).catch((error) => {
+      logger.warn('Failed to clean up duplicate receipt object', { finalStorageKey, error });
+    });
     throw new ConflictError('Duplicate receipt: this file has already been uploaded');
   }
 
-  // Verify file exists in storage
-  const storage = getStorage();
-  const exists = await storage.exists(input.key);
-  if (!exists) {
-    throw new ValidationError('File not found in storage. Upload may have failed.');
-  }
-
-  const result = await query<Receipt>(
-    `INSERT INTO receipts (user_id, file_path, file_name, file_hash, mime_type, file_size, thumbnail_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
-    [userId, input.key, input.fileName, input.fileHash, input.mimeType, input.fileSize, null]
-  );
-
-  const receipt = result.rows[0];
+  const receipt = transactionResult.receipt;
   let parsedData: ParsedReceiptData | null = null;
 
-  if (input.lineId) {
-    await query(
-      `INSERT INTO receipt_line_associations (receipt_id, line_id)
-       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [receipt.id, input.lineId]
-    );
-  }
-
   if (input.icr) {
-    // For S3, get the file buffer and parse directly
-    const fileBuffer = await storage.get(input.key);
-    parsedData = await parseReceiptFromBuffer(fileBuffer, input.fileName, input.mimeType);
+    parsedData = await parseReceiptFromBuffer(fileBuffer, pending.file_name, detectedMimeType);
 
     if (parsedData) {
       await query(
@@ -434,7 +579,13 @@ export async function confirmUpload(
     }
   }
 
-  logger.info('Receipt upload confirmed', { receiptId: receipt.id, lineId: input.lineId ?? null, key: input.key, icr: input.icr, parsed: !!parsedData });
+  logger.info('Receipt upload confirmed', {
+    receiptId: receipt.id,
+    lineId: pending.line_id,
+    pendingUploadId: pending.id,
+    icr: input.icr,
+    parsed: !!parsedData,
+  });
 
   return { receipt, parsedData };
 }

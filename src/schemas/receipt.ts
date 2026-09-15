@@ -71,13 +71,13 @@ export const UploadUrlResponseSchema = z.object({
 }).openapi('UploadUrlResponse');
 
 export const ConfirmUploadSchema = z.object({
-  key: z.string().openapi({ description: 'Storage key returned from upload URL request' }),
-  fileName: z.string().min(1).max(255).openapi({ example: 'receipt.pdf', description: 'Original file name' }),
-  mimeType: z.string().openapi({ example: 'application/pdf', description: 'MIME type of the file' }),
-  fileSize: z.number().int().positive().openapi({ example: 1024000, description: 'File size in bytes' }),
-  fileHash: z.string().length(64).openapi({ description: 'SHA-256 hash of the file for deduplication' }),
+  key: z.string().min(1).max(500).openapi({ description: 'Opaque storage key returned from the upload URL request' }),
+  fileName: z.string().min(1).max(255).optional().openapi({ example: 'receipt.pdf', description: 'Deprecated integrity hint; the server uses pending-upload metadata' }),
+  mimeType: z.string().optional().openapi({ example: 'application/pdf', description: 'Deprecated integrity hint; the server detects the stored content type' }),
+  fileSize: z.number().int().positive().optional().openapi({ example: 1024000, description: 'Deprecated integrity hint; the server measures the stored object' }),
+  fileHash: z.string().length(64).optional().openapi({ description: 'Optional integrity hint; the server recomputes SHA-256' }),
   icr: z.boolean().optional().openapi({ description: 'Enable receipt parsing (ICR)' }),
-  lineId: z.string().uuid().optional().openapi({ description: 'Expense line to associate after upload' }),
+  lineId: z.string().uuid().optional().openapi({ description: 'Deprecated integrity hint; the line binding was fixed when the URL was requested' }),
 }).openapi('ConfirmUpload');
 
 export const DownloadUrlResponseSchema = z.object({

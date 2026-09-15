@@ -41,7 +41,7 @@ export function handleError(c: Context, error: unknown): Response {
       },
     };
 
-    return c.json(response, error.statusCode as 400 | 401 | 403 | 404 | 409 | 500);
+    return c.json(response, error.statusCode as 400 | 401 | 403 | 404 | 409 | 413 | 500);
   }
 
   if (error instanceof ZodError) {

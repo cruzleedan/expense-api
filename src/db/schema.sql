@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted', 'paid')),
+    status VARCHAR(50) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted', 'paid')),
     -- Organizational context
     department_id UUID REFERENCES departments(id),
     department_name VARCHAR(255),  -- Denormalized
@@ -379,8 +379,11 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     submitted_at TIMESTAMP WITH TIME ZONE,
     approved_at TIMESTAMP WITH TIME ZONE,
     posted_at TIMESTAMP WITH TIME ZONE,
+    posted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    posting_reference VARCHAR(255),
     paid_at TIMESTAMP WITH TIME ZONE,
     paid_by VARCHAR(255),
+    payment_reference VARCHAR(255),
     exchange_rate DECIMAL(10,6) DEFAULT 1.0,
     base_currency_total DECIMAL(12,2),
     submission_comment TEXT,
@@ -399,6 +402,41 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP WITH TIME ZONE  -- NULL = active; set for soft deletes
 );
+
+-- Additive upgrade path for databases created before WORK-0032.
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS posted_by UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS posting_reference VARCHAR(255);
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(255);
+ALTER TABLE expense_reports ALTER COLUMN status SET NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_reports_posting_reference
+    ON expense_reports(posting_reference) WHERE posting_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_reports_payment_reference
+    ON expense_reports(payment_reference) WHERE payment_reference IS NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_nonnegative_totals') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_nonnegative_totals
+            CHECK (total_amount >= 0 AND net_amount >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_submission_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_submission_timestamp_state
+            CHECK (status IN ('draft') OR submitted_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_approval_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_approval_timestamp_state
+            CHECK (status NOT IN ('approved', 'posted', 'paid') OR approved_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_posting_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_posting_timestamp_state
+            CHECK (status NOT IN ('posted', 'paid') OR posted_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_payment_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_payment_state
+            CHECK (status <> 'paid' OR (paid_at IS NOT NULL AND paid_by IS NOT NULL AND payment_reference IS NOT NULL)) NOT VALID;
+    END IF;
+END $$;
 
 -- WORK-0015: same shape/reasoning as expense_line_field_values above, keyed
 -- on expense_report_id instead. Two tables, not one polymorphic table — see
@@ -569,6 +607,26 @@ CREATE TABLE IF NOT EXISTS receipts (
     ) STORED,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- One-time server-owned capabilities for direct-to-object-storage uploads.
+-- The storage key is opaque and bound to the requesting user and metadata;
+-- confirmation never trusts client-supplied file attributes.
+CREATE TABLE IF NOT EXISTS pending_receipt_uploads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    storage_key VARCHAR(500) NOT NULL UNIQUE,
+    line_id UUID REFERENCES expense_lines(id) ON DELETE SET NULL,
+    file_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    expected_size INTEGER NOT NULL CHECK (expected_size > 0),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_receipt_uploads_owner_expiry
+    ON pending_receipt_uploads(user_id, expires_at);
 
 -- Many-to-many: receipts <-> expense_lines
 CREATE TABLE IF NOT EXISTS receipt_line_associations (
@@ -1543,10 +1601,12 @@ INSERT INTO permissions (name, description, category, risk_level) VALUES
 ('report.approve', 'Approve reports at current workflow step', 'report', 'high'),
 ('report.reject', 'Reject reports permanently', 'report', 'high'),
 ('report.return', 'Return reports for correction', 'report', 'medium'),
+('report.correct', 'Reopen an approved but unposted report for correction', 'report', 'high'),
 ('report.reassign', 'Reassign approver for a report', 'report', 'medium'),
 ('report.force_approve', 'Approve report bypassing workflow', 'report', 'critical'),
 -- Report Management - Financial Operations
 ('report.post', 'Post approved reports to accounting system', 'report', 'high'),
+('report.pay', 'Record payment of posted expense reports', 'report', 'high'),
 ('report.unpost', 'Reverse a posted report', 'report', 'critical'),
 ('report.export', 'Export report data', 'report', 'medium'),
 ('report.export.financial', 'Export financial data including sensitive info', 'report', 'high'),
@@ -1717,7 +1777,7 @@ ON CONFLICT DO NOTHING;
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'finance' AND p.name IN (
-    'report.view.all', 'report.post', 'report.export', 'report.export.financial',
+    'report.view.all', 'report.post', 'report.pay', 'report.correct', 'report.export', 'report.export.financial',
     'attachment.view.all', 'attachment.download',
     'audit.view',
     'analytics.view', 'analytics.export',

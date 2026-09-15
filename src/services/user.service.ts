@@ -1,7 +1,7 @@
 import { randomBytes, scrypt } from 'crypto';
 import { promisify } from 'util';
 import { query } from '../db/client.js';
-import type { User, Role } from '../types/index.js';
+import type { User } from '../types/index.js';
 import { NotFoundError, ConflictError, ValidationError } from '../types/index.js';
 import {
   getOffset,
@@ -122,8 +122,8 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const username = input.username || input.email.split('@')[0];
 
   const result = await query<User>(
-    `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true)
+    `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active, is_verified)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true, true)
      RETURNING *`,
     [
       input.email,
@@ -391,7 +391,8 @@ export async function deleteUser(userId: string): Promise<void> {
   await query('DELETE FROM users WHERE id = $1', [userId]);
 }
 
-// Role management functions
+// Role reads used by the user administration response model. Role mutations
+// live in permission.service.ts so all routes share one policy boundary.
 
 export async function getUserRolesById(userId: string): Promise<UserRole[]> {
   const result = await query<UserRole>(
@@ -426,107 +427,4 @@ export async function listUsersWithRoles(
   );
 
   return { users: usersWithRoles, total };
-}
-
-export async function setUserRolesById(
-  userId: string,
-  roleIds: string[],
-  assignedBy?: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  // Validate all role IDs exist
-  for (const roleId of roleIds) {
-    const role = await query<Role>(
-      'SELECT id FROM roles WHERE id = $1 AND is_active = true',
-      [roleId]
-    );
-    if (role.rows.length === 0) {
-      throw new NotFoundError(`Role ${roleId}`);
-    }
-  }
-
-  // Remove existing roles
-  await query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
-
-  // Assign new roles
-  for (const roleId of roleIds) {
-    await query(
-      `INSERT INTO user_roles (user_id, role_id, assigned_by)
-       VALUES ($1, $2, $3)
-       ON CONFLICT DO NOTHING`,
-      [userId, roleId, assignedBy ?? null]
-    );
-  }
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
-}
-
-export async function addUserRole(
-  userId: string,
-  roleId: string,
-  assignedBy?: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  const role = await query<Role>(
-    'SELECT id FROM roles WHERE id = $1 AND is_active = true',
-    [roleId]
-  );
-  if (role.rows.length === 0) {
-    throw new NotFoundError('Role');
-  }
-
-  // Check if already assigned
-  const existing = await query(
-    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2',
-    [userId, roleId]
-  );
-  if (existing.rows.length > 0) {
-    throw new ConflictError('Role already assigned to user');
-  }
-
-  await query(
-    `INSERT INTO user_roles (user_id, role_id, assigned_by)
-     VALUES ($1, $2, $3)`,
-    [userId, roleId, assignedBy ?? null]
-  );
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
-}
-
-export async function removeUserRole(
-  userId: string,
-  roleId: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  const result = await query(
-    'DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 RETURNING *',
-    [userId, roleId]
-  );
-
-  if (result.rowCount === 0) {
-    throw new NotFoundError('User role assignment');
-  }
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
 }

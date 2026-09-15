@@ -100,7 +100,7 @@ const listHandler: RouteHandler<typeof listRoute> = async (c) => {
   let skipOwnership = false;
   const jwtPayload = getUser(c) as unknown as JwtPayloadV3;
   if (jwtPayload.permissions?.includes('report.approve')) {
-    skipOwnership = await isReportPendingApprovalByUser(reportId, userId, jwtPayload.roles ?? []);
+    skipOwnership = await isReportPendingApprovalByUser(reportId, userId);
   }
 
   const { lines, total } = await listExpenseLines(reportId, userId, paginationParams, skipOwnership);

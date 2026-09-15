@@ -144,6 +144,7 @@ export class S3StorageProvider implements StorageProvider {
       Bucket: this.bucket,
       Key: key,
       ContentType: options?.contentType,
+      ContentLength: options?.contentLength,
     });
 
     const url = await getSignedUrl(this.client, command, { expiresIn });

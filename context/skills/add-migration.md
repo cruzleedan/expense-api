@@ -9,6 +9,9 @@ applies-to: expense-api
 Any time the PostgreSQL schema needs to change (new table, new column, new index,
 altered constraint).
 
+If the change belongs to a work item, read
+`context/reference/implementation-playbook.md` first.
+
 ## Background
 
 Two schema files must stay in sync (see ADR-0002):
@@ -57,26 +60,45 @@ export const widgets = pgTable('widgets', {
 Even if the new table won't use Drizzle for queries, add it to `schema.ts` — it
 provides TypeScript type inference for the whole codebase.
 
-### 3. Apply the migration
+### 3. Prepare an additive database change
+
+`src/db/schema.sql` is bootstrap DDL and is not fully repeatable against a
+populated database. Do not replay it to evolve an existing environment.
+
+Until WORK-0043 introduces versioned migrations, put the exact reviewed,
+idempotent statements needed for the deployment in a dedicated SQL file. Use
+`IF NOT EXISTS` or guarded `DO` blocks, preflight data that may violate a new
+constraint or unique index, and avoid unrelated bootstrap/seed statements.
+
+### 4. Apply the change
 
 ```bash
-# From the expense-api project directory
-psql $DATABASE_URL -f src/db/schema.sql
+# Existing database: helper enables ON_ERROR_STOP and one transaction
+npm run db:apply-change -- path/to/reviewed-additive-change.sql
 ```
 
-For production (via Docker):
+For a database available only through its container:
+
 ```bash
-docker exec expense-api psql $DATABASE_URL -f /app/src/db/schema.sql
+DB_CONTAINER=expense-api-postgres-1 \
+DB_USER=expense_user DB_NAME=expense_db \
+npm run db:apply-change -- path/to/reviewed-additive-change.sql
 ```
 
-### 4. Verify
+The helper refuses `src/db/schema.sql`. `--bootstrap src/db/schema.sql` is only
+for a verified empty database.
+
+### 5. Verify
 
 ```bash
 psql $DATABASE_URL -c "\d widgets"   # confirm table structure
 psql $DATABASE_URL -c "\di"          # confirm indexes
 ```
 
-### 5. Write an ADR if the change is architecturally significant
+Also verify constraints, permissions, and role grants relevant to the change.
+Run `npm run verify:schema` to confirm every SQL table has a Drizzle definition.
+
+### 6. Write an ADR if the change is architecturally significant
 
 Significant = new table, change to auth/billing data model, new indexing strategy,
 added pgvector extension. Routine = adding a nullable column, adding an index for
@@ -87,5 +109,8 @@ performance.
 - [ ] `schema.sql` updated with `IF NOT EXISTS` guards
 - [ ] `schema.ts` updated with matching Drizzle table definition
 - [ ] Migration applied and verified in dev environment
+- [ ] Existing-database change is additive, guarded, and applied with `ON_ERROR_STOP`
+- [ ] Preflight queries prove existing data can accept new constraints/indexes
+- [ ] `npm run verify:schema` passes
 - [ ] No breaking changes to existing columns without a migration plan
 - [ ] ADR written if the change is architecturally significant

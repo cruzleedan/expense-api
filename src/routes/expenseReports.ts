@@ -17,6 +17,7 @@ import {
   UpdateExpenseReportSchema,
   ExpenseReportListQuerySchema,
   ExpenseReportListResponseSchema,
+  DeleteExpenseReportQuerySchema,
 } from '../schemas/expenseReport.js';
 import {
   ErrorSchema,
@@ -26,7 +27,7 @@ import {
   SyncManifestQuerySchema,
   SyncManifestResponseSchema,
 } from '../schemas/common.js';
-import { attachLinesToReport } from '../services/expenseLine.service.js';
+import { requireAnyPermission, requirePermission } from '../middleware/permission.js';
 
 const serializeReport = (r: unknown) => ExpenseReportSchema.parse(r);
 const serializeReports = (rs: unknown[]) => rs.map(serializeReport);
@@ -105,6 +106,7 @@ const createRoute_ = createRoute({
   summary: 'Create expense report',
   description: 'Create a new expense report',
   security,
+  middleware: [requirePermission('report.create')] as const,
   request: {
     headers: AuthHeaderSchema,
     body: {
@@ -132,10 +134,6 @@ const createHandler: RouteHandler<typeof createRoute_> = async (c) => {
   const input = c.req.valid('json');
 
   const report = await createExpenseReport(userId, input);
-
-  if (input.lineIds && input.lineIds.length > 0) {
-    await attachLinesToReport(report.id, userId, input.lineIds);
-  }
 
   return c.json(serializeReport(report), 201);
 };
@@ -229,8 +227,9 @@ const updateRoute = createRoute({
   path: '/{id}',
   tags: ['Expense Reports'],
   summary: 'Update expense report',
-  description: 'Update an existing expense report',
+  description: 'Edit descriptive fields on a draft or returned report. Requires expectedVersion.',
   security,
+  middleware: [requireAnyPermission('report.edit.own', 'report.edit.team', 'report.edit.all')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -259,6 +258,10 @@ const updateRoute = createRoute({
       description: 'Not found',
       content: { 'application/json': { schema: ErrorSchema } },
     },
+    409: {
+      description: 'Invalid state or stale report version',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
   },
 });
 
@@ -283,10 +286,12 @@ const deleteRoute = createRoute({
   path: '/{id}',
   tags: ['Expense Reports'],
   summary: 'Delete expense report',
-  description: 'Delete an expense report and all associated data',
+  description: 'Soft-delete a draft or returned expense report using optimistic concurrency',
   security,
+  middleware: [requireAnyPermission('report.delete.own', 'report.delete.all')] as const,
   request: {
     params: UuidParamSchema,
+    query: DeleteExpenseReportQuerySchema,
     headers: AuthHeaderSchema,
   },
   responses: {
@@ -312,12 +317,13 @@ const deleteRoute = createRoute({
 const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const userId = getUserId(c);
   const { id } = c.req.valid('param');
+  const { expectedVersion } = c.req.valid('query');
 
   // Get user permissions from JWT if available
   const jwtUser = getUser(c) as unknown as JwtPayloadV3;
   const permissions = jwtUser?.permissions || [];
 
-  await deleteExpenseReport(id, userId, permissions);
+  await deleteExpenseReport(id, userId, expectedVersion, permissions);
 
   return c.json({ message: 'Expense report deleted' }, 200);
 };

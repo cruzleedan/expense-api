@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/permission.js';
+import { getAuthUser, requirePermission } from '../middleware/permission.js';
 import {
   getAllRoles,
   getRoleById,
@@ -447,7 +447,8 @@ const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) =>
     return c.json(sodResult as any, 400);
   }
 
-  await setUserRoles(userId, roleIds, adminId);
+  const roleActor = getAuthUser(c);
+  await setUserRoles(userId, roleIds, { id: adminId, permissions: roleActor.permissions });
 
   return c.json({ message: 'User roles updated successfully' }, 200);
 };
@@ -505,7 +506,8 @@ const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
     return c.json(sodResult as any, 400);
   }
 
-  await assignRoleToUser(userId, roleId, adminId);
+  const roleActor = getAuthUser(c);
+  await assignRoleToUser(userId, roleId, { id: adminId, permissions: roleActor.permissions });
 
   return c.json({ message: 'Role added successfully' }, 200);
 };
@@ -533,8 +535,9 @@ const removeUserRoleRoute = createRoute({
 
 const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { userId, roleId } = c.req.valid('param');
+  const actor = getAuthUser(c);
 
-  await removeRoleFromUser(userId, roleId);
+  await removeRoleFromUser(userId, roleId, { id: actor.id, permissions: actor.permissions });
 
   return c.json({ message: 'Role removed successfully' }, 200);
 };

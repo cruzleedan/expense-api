@@ -37,7 +37,7 @@ export interface RefreshToken {
   last_used_at: Date | null;
 }
 
-export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted';
+export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
 
 export interface ExpenseReport {
   id: string;
@@ -62,6 +62,11 @@ export interface ExpenseReport {
   submitted_at: Date | null;
   approved_at: Date | null;
   posted_at: Date | null;
+  posted_by: string | null;
+  posting_reference: string | null;
+  paid_at: Date | null;
+  paid_by: string | null;
+  payment_reference: string | null;
   version: number;
   client_id: string | null;
   created_at: Date;
@@ -231,6 +236,13 @@ export class ConflictError extends AppError {
   }
 }
 
+export class PayloadTooLargeError extends AppError {
+  constructor(message = 'Request payload is too large') {
+    super(413, message, 'PAYLOAD_TOO_LARGE');
+    this.name = 'PayloadTooLargeError';
+  }
+}
+
 // ============================================================================
 // V3.0 Types: RBAC, Workflows, and Audit
 // ============================================================================
@@ -296,6 +308,8 @@ export interface WorkflowStep {
   target_type: 'role' | 'relationship' | 'hybrid' | 'system';
   target_value: string | { role: string; relationship: string };
   sla_hours: number;
+  /** Point-in-time principals frozen into a submitted report's workflow snapshot. */
+  eligible_user_ids?: string[];
   required?: boolean;
   required_if?: WorkflowStepCondition;
   skip_if?: WorkflowStepCondition;

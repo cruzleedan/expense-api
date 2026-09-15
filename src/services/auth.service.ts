@@ -7,11 +7,23 @@ import { logger } from '../utils/logger.js';
 import type { User, JwtPayload, JwtPayloadV3, AuthTokens } from '../types/index.js';
 import { UnauthorizedError, ConflictError, ValidationError } from '../types/index.js';
 import { getUserRoleNames, getUserPermissions } from './permission.service.js';
+import { canReceiveNormalTokens } from '../policies/accountAccess.js';
 
 const scryptAsync = promisify(scrypt);
 
 // JWT secret as Uint8Array for jose
 const JWT_SECRET = new TextEncoder().encode(env.JWT_SECRET);
+
+async function assertAccountCanReceiveTokens(userId: string): Promise<void> {
+  const result = await query<{ is_active: boolean; is_verified: boolean }>(
+    'SELECT is_active, is_verified FROM users WHERE id = $1',
+    [userId]
+  );
+  const account = result.rows[0];
+  if (!canReceiveNormalTokens(account)) {
+    throw new UnauthorizedError('Account is not active and verified');
+  }
+}
 
 // Parse duration strings like '15m', '7d' to seconds
 function parseDuration(duration: string): number {
@@ -49,6 +61,7 @@ export async function generateAccessToken(
   user: Pick<User, 'id' | 'email' | 'username' | 'roles_version'>,
   refreshTokenId?: string
 ): Promise<string> {
+  await assertAccountCanReceiveTokens(user.id);
   // Fetch user's roles and permissions
   const roles = await getUserRoleNames(user.id);
   const permissions = await getUserPermissions(user.id);
@@ -74,6 +87,7 @@ export async function generateAccessToken(
 
 // Legacy access token generation (for backward compatibility during migration)
 export async function generateAccessTokenLegacy(user: Pick<User, 'id' | 'email'>): Promise<string> {
+  await assertAccountCanReceiveTokens(user.id);
   const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
     sub: user.id,
     email: user.email,
@@ -92,6 +106,7 @@ export async function generateRefreshToken(
   ipAddress?: string,
   userAgent?: string
 ): Promise<{ token: string; tokenId: string }> {
+  await assertAccountCanReceiveTokens(user.id);
   const tokenId = randomBytes(16).toString('hex');
 
   const payload: Omit<JwtPayload, 'iat' | 'exp'> & { jti: string } = {
@@ -128,27 +143,20 @@ export async function verifyAccessToken(token: string): Promise<JwtPayloadV3> {
       throw new UnauthorizedError('Invalid token type');
     }
 
-    // For v3 tokens, validate roles_version against database
-    if (payload.roles_version !== undefined) {
-      const result = await query<{ roles_version: number; is_active: boolean }>(
-        'SELECT roles_version, is_active FROM users WHERE id = $1',
-        [payload.sub]
-      );
+    // Every token format must remain bound to an active, verified account.
+    const result = await query<{ roles_version: number; is_active: boolean; is_verified: boolean }>(
+      'SELECT roles_version, is_active, is_verified FROM users WHERE id = $1',
+      [payload.sub]
+    );
+    if (result.rows.length === 0) throw new UnauthorizedError('User not found');
 
-      if (result.rows.length === 0) {
-        throw new UnauthorizedError('User not found');
-      }
+    const user = result.rows[0];
+    if (!user.is_active) throw new UnauthorizedError('User account is deactivated');
+    if (!user.is_verified) throw new UnauthorizedError('User account is not verified');
 
-      const user = result.rows[0];
-
-      if (!user.is_active) {
-        throw new UnauthorizedError('User account is deactivated');
-      }
-
-      // Check if roles have changed since token was issued
-      if (user.roles_version !== payload.roles_version) {
-        throw new UnauthorizedError('Session invalidated due to permission changes. Please re-authenticate.');
-      }
+    // For v3 tokens, validate roles_version against database.
+    if (payload.roles_version !== undefined && user.roles_version !== payload.roles_version) {
+      throw new UnauthorizedError('Session invalidated due to permission changes. Please re-authenticate.');
     }
 
     return payload as unknown as JwtPayloadV3;
@@ -171,6 +179,8 @@ export async function verifyAccessTokenLegacy(token: string): Promise<JwtPayload
     if (payload.type !== 'access') {
       throw new UnauthorizedError('Invalid token type');
     }
+
+    await assertAccountCanReceiveTokens(String(payload.sub));
 
     return payload as unknown as JwtPayload;
   } catch (error) {
@@ -267,10 +277,8 @@ function validatePasswordStrength(password: string): void {
 export async function registerWithEmail(
   email: string,
   password: string,
-  username?: string,
-  ipAddress?: string,
-  userAgent?: string
-): Promise<{ user: User; tokens: AuthTokens }> {
+  username?: string
+): Promise<{ user: User }> {
   // Check if user exists
   const existing = await query<User>('SELECT id FROM users WHERE email = $1', [email]);
   if (existing.rows.length > 0) {
@@ -295,10 +303,10 @@ export async function registerWithEmail(
   const generatedUsername = username || email.split('@')[0];
 
   const result = await query<User>(
-    `INSERT INTO users (email, username, password_hash, roles_version, is_active)
-     VALUES ($1, $2, $3, 1, true)
+    `INSERT INTO users (email, username, password_hash, roles_version, is_active, is_verified)
+     VALUES ($1, $2, $3, 1, false, false)
      RETURNING id, email, username, password_hash, oauth_provider, oauth_id,
-               roles_version, is_active, failed_login_attempts, locked_until,
+               roles_version, is_active, is_verified, failed_login_attempts, locked_until,
                last_login_at, department_id, manager_id, cost_center,
                created_at, updated_at`,
     [email, generatedUsername, passwordHash]
@@ -309,12 +317,9 @@ export async function registerWithEmail(
   // Assign default 'employee' role
   await assignDefaultRole(user.id);
 
-  // Refetch user to get updated roles_version if changed
-  const tokens = await generateTokens(user, ipAddress, userAgent);
+  logger.info('Pending user registration created without tokens', { userId: user.id, email });
 
-  logger.info('User registered with email', { userId: user.id, email });
-
-  return { user, tokens };
+  return { user };
 }
 
 // Assign default employee role to new users
@@ -344,7 +349,7 @@ export async function loginWithEmail(
 ): Promise<{ user: User; tokens: AuthTokens }> {
   const result = await query<User>(
     `SELECT id, email, username, password_hash, oauth_provider, oauth_id,
-            roles_version, is_active, failed_login_attempts, locked_until,
+            roles_version, is_active, is_verified, failed_login_attempts, locked_until,
             last_login_at, department_id, manager_id, cost_center,
             created_at, updated_at
      FROM users WHERE email = $1`,
@@ -362,6 +367,9 @@ export async function loginWithEmail(
   // Check if account is active
   if (!user.is_active) {
     throw new UnauthorizedError('Account is deactivated. Please contact support.');
+  }
+  if (!user.is_verified) {
+    throw new UnauthorizedError('Account is pending verification. Please contact support.');
   }
 
   // Check if account is locked
@@ -463,7 +471,7 @@ export async function loginWithOAuth(
   // Check for existing OAuth user
   let result = await query<User>(
     `SELECT id, email, username, password_hash, oauth_provider, oauth_id,
-            roles_version, is_active, failed_login_attempts, locked_until,
+            roles_version, is_active, is_verified, failed_login_attempts, locked_until,
             last_login_at, department_id, manager_id, cost_center,
             created_at, updated_at
      FROM users WHERE oauth_provider = $1 AND oauth_id = $2`,
@@ -471,7 +479,6 @@ export async function loginWithOAuth(
   );
 
   let user: User;
-  let isNewUser = false;
 
   if (result.rows.length > 0) {
     user = result.rows[0];
@@ -479,6 +486,9 @@ export async function loginWithOAuth(
     // Check if account is active
     if (!user.is_active) {
       throw new UnauthorizedError('Account is deactivated. Please contact support.');
+    }
+    if (!user.is_verified) {
+      throw new UnauthorizedError('Account is pending verification. Please contact support.');
     }
 
     // Update last login
@@ -489,7 +499,7 @@ export async function loginWithOAuth(
     // Check if email exists (link accounts or create new)
     result = await query<User>(
       `SELECT id, email, username, password_hash, oauth_provider, oauth_id,
-              roles_version, is_active, failed_login_attempts, locked_until,
+              roles_version, is_active, is_verified, failed_login_attempts, locked_until,
               last_login_at, department_id, manager_id, cost_center,
               created_at, updated_at
        FROM users WHERE email = $1`,
@@ -503,6 +513,9 @@ export async function loginWithOAuth(
       if (!user.is_active) {
         throw new UnauthorizedError('Account is deactivated. Please contact support.');
       }
+      if (!user.is_verified) {
+        throw new UnauthorizedError('Account is pending verification. Please contact support.');
+      }
 
       await query(
         'UPDATE users SET oauth_provider = $1, oauth_id = $2, last_login_at = NOW() WHERE id = $3',
@@ -512,27 +525,8 @@ export async function loginWithOAuth(
       user.oauth_id = oauthId;
       logger.info('OAuth linked to existing user', { userId: user.id, provider });
     } else {
-      // Create new user
-      const username = email.split('@')[0] + '_' + randomBytes(4).toString('hex');
-
-      result = await query<User>(
-        `INSERT INTO users (email, username, oauth_provider, oauth_id, roles_version, is_active, last_login_at)
-         VALUES ($1, $2, $3, $4, 1, true, NOW())
-         RETURNING id, email, username, password_hash, oauth_provider, oauth_id,
-                   roles_version, is_active, failed_login_attempts, locked_until,
-                   last_login_at, department_id, manager_id, cost_center,
-                   created_at, updated_at`,
-        [email, username, provider, oauthId]
-      );
-      user = result.rows[0];
-      isNewUser = true;
-      logger.info('New OAuth user created', { userId: user.id, provider });
+      throw new UnauthorizedError('Account must be provisioned by an administrator before OAuth login');
     }
-  }
-
-  // Assign default role for new users
-  if (isNewUser) {
-    await assignDefaultRole(user.id);
   }
 
   // Enforce concurrent session limit
@@ -561,7 +555,7 @@ export async function refreshTokens(
   // Get user with full v3 data
   const result = await query<User>(
     `SELECT id, email, username, password_hash, oauth_provider, oauth_id,
-            roles_version, is_active, failed_login_attempts, locked_until,
+            roles_version, is_active, is_verified, failed_login_attempts, locked_until,
             last_login_at, department_id, manager_id, cost_center,
             created_at, updated_at
      FROM users WHERE id = $1`,
@@ -576,6 +570,9 @@ export async function refreshTokens(
 
   if (!user.is_active) {
     throw new UnauthorizedError('User account is deactivated');
+  }
+  if (!user.is_verified) {
+    throw new UnauthorizedError('User account is not verified');
   }
 
   return generateTokens(user, ipAddress, userAgent);
@@ -604,7 +601,7 @@ export async function revokeAllTokens(userId: string): Promise<void> {
 export async function getUserById(userId: string): Promise<User | null> {
   const result = await query<User>(
     `SELECT id, email, username, password_hash, oauth_provider, oauth_id,
-            roles_version, is_active, failed_login_attempts, locked_until,
+            roles_version, is_active, is_verified, failed_login_attempts, locked_until,
             last_login_at, department_id, manager_id, cost_center,
             created_at, updated_at
      FROM users WHERE id = $1`,

@@ -14,6 +14,7 @@ import {
   primaryKey,
   unique,
   uniqueIndex,
+  index,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
@@ -322,7 +323,7 @@ export const expenseReports = pgTable('expense_reports', {
     .references(() => users.id, { onDelete: 'cascade' }),
   title: varchar({ length: 255 }).notNull(),
   description: text(),
-  status: varchar({ length: 50 }).default('draft'),
+  status: varchar({ length: 50 }).notNull().default('draft'),
   departmentId: uuid(),
   departmentName: varchar({ length: 255 }),
   costCenter: varchar({ length: 50 }),
@@ -345,8 +346,11 @@ export const expenseReports = pgTable('expense_reports', {
   submittedAt: timestamp({ withTimezone: true, mode: 'string' }),
   approvedAt: timestamp({ withTimezone: true, mode: 'string' }),
   postedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  postedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+  postingReference: varchar({ length: 255 }),
   paidAt: timestamp({ withTimezone: true, mode: 'string' }),
   paidBy: varchar({ length: 255 }),
+  paymentReference: varchar({ length: 255 }),
   exchangeRate: num(10, 6).default(1.0),
   baseCurrencyTotal: num(12, 2),
   submissionComment: text(),
@@ -544,6 +548,29 @@ export const receipts = pgTable('receipts', {
   ),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
+
+// A direct upload is only accepted when this server-owned capability is
+// presented by the same user before expiry. Client-supplied confirmation
+// metadata is never authoritative.
+export const pendingReceiptUploads = pgTable(
+  'pending_receipt_uploads',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull().references(() => users.id, { onDelete: 'cascade' }),
+    storageKey: varchar({ length: 500 }).notNull().unique(),
+    lineId: uuid().references(() => expenseLines.id, { onDelete: 'set null' }),
+    fileName: varchar({ length: 255 }).notNull(),
+    mimeType: varchar({ length: 100 }).notNull(),
+    expectedSize: integer().notNull(),
+    expiresAt: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+    consumedAt: timestamp({ withTimezone: true, mode: 'string' }),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('idx_pending_receipt_uploads_owner_expiry').on(t.userId, t.expiresAt),
+  ]
+);
 
 export const receiptLineAssociations = pgTable(
   'receipt_line_associations',

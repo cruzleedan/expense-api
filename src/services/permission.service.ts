@@ -8,7 +8,8 @@ import type {
   PermissionCheckResult,
   AuthUser,
 } from '../types/index.js';
-import { NotFoundError, ConflictError } from '../types/index.js';
+import { NotFoundError, ConflictError, ForbiddenError } from '../types/index.js';
+import { assertNotSelfRoleMutation } from '../policies/userAdministration.js';
 import {
   buildOrderByClause,
   buildSearchCondition,
@@ -475,43 +476,113 @@ export async function getUserAuthContext(userId: string): Promise<AuthUser | nul
   };
 }
 
+export interface RoleMutationActor {
+  id: string;
+  permissions: string[];
+}
+
+async function assertAssignableRoles(
+  client: Awaited<ReturnType<typeof db.getClient>>,
+  roleIds: string[],
+  actor: RoleMutationActor
+): Promise<void> {
+  const target = await client.query('SELECT 1 FROM users WHERE id = $1', [actor.id]);
+  if (target.rows.length === 0) throw new NotFoundError('Assigning user');
+
+  const rolesResult = await client.query<{ id: string; name: string }>(
+    `SELECT id, name FROM roles
+     WHERE id = ANY($1::uuid[]) AND is_active = true`,
+    [roleIds]
+  );
+  if (rolesResult.rows.length !== new Set(roleIds).size) {
+    throw new NotFoundError('Role');
+  }
+
+  const permissions = new Set(actor.permissions);
+  if (
+    rolesResult.rows.some((role) => role.name === 'admin' || role.name === 'super_admin') &&
+    !permissions.has('role.assign.admin')
+  ) {
+    throw new ForbiddenError('role.assign.admin permission required to assign admin roles');
+  }
+  if (
+    rolesResult.rows.some((role) => role.name === 'finance') &&
+    !permissions.has('role.assign.finance')
+  ) {
+    throw new ForbiddenError('role.assign.finance permission required to assign finance role');
+  }
+}
+
 /**
  * Assign a role to a user
  */
 export async function assignRoleToUser(
   userId: string,
   roleId: string,
-  assignedBy: string
+  actor: RoleMutationActor
 ): Promise<void> {
-  // Insert role assignment
-  await db.query(
-    `INSERT INTO user_roles (user_id, role_id, assigned_by)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, role_id) DO NOTHING`,
-    [userId, roleId, assignedBy]
-  );
+  assertNotSelfRoleMutation(actor, userId);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const target = await client.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    if (target.rows.length === 0) throw new NotFoundError('User');
+    await assertAssignableRoles(client, [roleId], actor);
 
-  // Increment roles_version to invalidate existing tokens
-  await db.query(
-    `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
-    [userId]
-  );
+    const inserted = await client.query(
+      `INSERT INTO user_roles (user_id, role_id, assigned_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, role_id) DO NOTHING
+       RETURNING user_id`,
+      [userId, roleId, actor.id]
+    );
+    if (inserted.rowCount === 0) throw new ConflictError('Role already assigned to user');
+
+    await client.query(
+      `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
+      [userId]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
  * Remove a role from a user
  */
-export async function removeRoleFromUser(userId: string, roleId: string): Promise<void> {
-  await db.query(
-    `DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
-    [userId, roleId]
-  );
+export async function removeRoleFromUser(
+  userId: string,
+  roleId: string,
+  actor: RoleMutationActor
+): Promise<void> {
+  assertNotSelfRoleMutation(actor, userId);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const target = await client.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    if (target.rows.length === 0) throw new NotFoundError('User');
 
-  // Increment roles_version to invalidate existing tokens
-  await db.query(
-    `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
-    [userId]
-  );
+    const removed = await client.query(
+      `DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 RETURNING user_id`,
+      [userId, roleId]
+    );
+    if (removed.rowCount === 0) throw new NotFoundError('User role assignment');
+
+    await client.query(
+      `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
+      [userId]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -520,12 +591,18 @@ export async function removeRoleFromUser(userId: string, roleId: string): Promis
 export async function setUserRoles(
   userId: string,
   roleIds: string[],
-  assignedBy: string
+  actor: RoleMutationActor
 ): Promise<void> {
+  assertNotSelfRoleMutation(actor, userId);
+  const uniqueRoleIds = [...new Set(roleIds)];
   const client = await db.getClient();
 
   try {
     await client.query('BEGIN');
+
+    const target = await client.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    if (target.rows.length === 0) throw new NotFoundError('User');
+    await assertAssignableRoles(client, uniqueRoleIds, actor);
 
     // Remove all existing roles
     await client.query(
@@ -534,11 +611,11 @@ export async function setUserRoles(
     );
 
     // Add new roles
-    for (const roleId of roleIds) {
+    for (const roleId of uniqueRoleIds) {
       await client.query(
         `INSERT INTO user_roles (user_id, role_id, assigned_by)
          VALUES ($1, $2, $3)`,
-        [userId, roleId, assignedBy]
+        [userId, roleId, actor.id]
       );
     }
 

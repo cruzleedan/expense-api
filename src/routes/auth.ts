@@ -2,7 +2,6 @@ import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { randomBytes } from 'crypto';
 import { setCookie, getCookie } from 'hono/cookie';
 import {
-  registerWithEmail,
   loginWithEmail,
   refreshTokens,
   logout,
@@ -18,7 +17,7 @@ import {
 import { deleteUser, updateUser } from '../services/user.service.js';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
-import { ValidationError } from '../types/index.js';
+import { ForbiddenError, ValidationError } from '../types/index.js';
 import {
   RegisterRequestSchema,
   LoginRequestSchema,
@@ -52,7 +51,7 @@ const registerRoute = createRoute({
   path: '/register',
   tags: ['Authentication'],
   summary: 'Register a new user',
-  description: 'Register a new user with email and password',
+  description: 'Public registration is disabled; accounts must be provisioned by an administrator',
   request: {
     body: {
       content: { 'application/json': { schema: RegisterRequestSchema } },
@@ -67,6 +66,10 @@ const registerRoute = createRoute({
       description: 'Validation error',
       content: { 'application/json': { schema: ErrorSchema } },
     },
+    403: {
+      description: 'Public registration is disabled',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
     409: {
       description: 'Email already registered',
       content: { 'application/json': { schema: ErrorSchema } },
@@ -75,15 +78,8 @@ const registerRoute = createRoute({
 });
 
 authRouter.openapi(registerRoute, async (c) => {
-  const { email, password } = c.req.valid('json');
-  const { user, tokens } = await registerWithEmail(email, password);
-
-  setRefreshTokenCookie(c, tokens.refreshToken);
-
-  return c.json({
-    user: { id: user.id, email: user.email },
-    accessToken: tokens.accessToken,
-  }, 201);
+  c.req.valid('json');
+  throw new ForbiddenError('Public registration is disabled; contact an administrator');
 });
 
 // Login route
