@@ -146,9 +146,10 @@ critical flags, and added the guarded check constraint.
 - OAuth-only protected actions deliberately fail closed. True second-factor MFA
   and accepted external-provider step-up remain design work, not implemented
   features.
-- The seeded `admin` role contains three configured toxic permission pairs and
-  is not exempt; new assignments fail closed. Existing assignments were not
-  silently revoked. Catalog correction and migration require WORK-0047.
+- At this item's deployment, the seeded `admin` role contained three configured
+  toxic permission pairs and was not exempt; assignments failed closed. This
+  catalog gate was resolved by [WORK-0047](0047-align-seeded-administrator-role-with-sod.md)
+  on 2026-09-15 with a compliant allowlist and audited transactional migration.
 - WORK-0027's public-exposure log review and production credential rotation
   remain mandatory incident-response gates. No credentials were rotated here.
 - WORK-0045 remains proposed. The production image build still reports four

@@ -16,7 +16,8 @@
     "check": "npm run verify:conventions && npm run verify:context && npm run verify:schema && npm run verify:scripts && npm test",
     "start": "node dist/index.js",
     "db:init": "bash scripts/apply-db-change.sh --bootstrap src/db/schema.sql && bash scripts/apply-db-change.sh src/db/seed-users.sql",
-    "db:apply-change": "bash scripts/apply-db-change.sh"
+    "db:apply-change": "bash scripts/apply-db-change.sh",
+    "db:migrate-admin-catalog": "node dist/db/migrateAdminRoleCatalog.js"
   },
   "keywords": [
     "expense",

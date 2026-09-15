@@ -261,6 +261,60 @@ duties exemption. Assigning/removing administrator roles requires additional
 stepped-up authority, and the last active, verified super-admin cannot be
 removed, deactivated, or deleted. Core control-plane permissions cannot be deleted.
 
+The ordinary system `admin` role uses an explicit, SoD-compliant allowlist
+([WORK-0047](context/work/0047-align-seeded-administrator-role-with-sod.md)).
+It manages configuration and ordinary administration, with report/audit support
+reads and exports. Expense submission belongs to `employee`, approval to
+`approver`, and posting/payment to `finance`; these are not implicit administrator
+capabilities. Combined-role assignments still undergo final-state SoD checks.
+New permissions are **not** automatically granted to `admin`.
+
+#### Existing-database administrator catalog migration
+
+Bootstrap SQL only initializes an empty database. For an existing database, use
+the operator-only, dry-run-first command below; never replay `src/db/schema.sql`.
+This is a grant-data migration, not DDL, so no Drizzle table change is required.
+The catalog is defined in `src/policies/roleCatalog.ts` and tested against the seed.
+
+```bash
+npm run build
+# Uses configured DATABASE_URL; inspect the database identity and grant diff.
+npm run db:migrate-admin-catalog -- --dry-run
+RBAC_MIGRATION_OPERATOR='approved change reference / operator' \
+  npm run db:migrate-admin-catalog -- --apply
+```
+
+For the existing production Compose service, build the image first, then use its
+configured database connection without publishing ports or recreating PostgreSQL:
+
+```bash
+docker compose -f compose.prod.yaml build expense-api
+docker compose -f compose.prod.yaml run --rm --no-deps expense-api \
+  node dist/db/migrateAdminRoleCatalog.js --dry-run
+docker compose -f compose.prod.yaml run --rm --no-deps \
+  -e RBAC_MIGRATION_OPERATOR='approved change reference / operator' expense-api \
+  node dist/db/migrateAdminRoleCatalog.js --apply
+docker compose -f compose.prod.yaml up -d --no-deps expense-api
+```
+
+The command requires the expected system catalog, every allowlisted permission,
+an active verified system super-admin, compliant ordinary seeded roles, and
+compliant combined final permissions for every administrator-assigned user.
+Conflicts abort the entire transaction; resolve them explicitly rather than
+silently assigning compensating financial roles. Application RBAC writes share
+its advisory lock. Direct operator SQL must not modify RBAC concurrently.
+Grant changes, all affected users' `roles_version` increments (including inactive
+users), and a sensitive audit event commit together or all roll back. The audit
+identifies the database operator/change label without impersonating an ERP user.
+An unchanged rerun neither writes an audit event nor invalidates tokens again.
+Affected users must refresh or sign in; clients must honor returned permission
+names rather than treating the role name as a financial-access bypass.
+
+Run the database regressions separately against fresh disposable PostgreSQL/
+pgvector databases: `ADMIN_CATALOG_INTEGRATION=1` for
+`dist/services/roleCatalog.integration.test.js` and `RBAC_INTEGRATION=1` for
+`dist/services/rbac.integration.test.js`. Both refuse populated databases.
+
 ### Expense Metadata
 
 | Method | Endpoint | Description |

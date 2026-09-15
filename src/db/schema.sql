@@ -1834,18 +1834,33 @@ WHERE r.name = 'auditor' AND p.name IN (
 )
 ON CONFLICT DO NOTHING;
 
--- Admin role permissions (most permissions except critical ones)
--- Note: this is a denylist, not an allowlist — new permissions (e.g.
--- form.view/form.manage/form.publish, WORK-0010) flow to 'admin'
--- automatically unless added to the NOT IN list below, and to
--- 'super_admin' automatically via the catch-all below that. No explicit
--- grant was needed for the form designer permissions.
+-- WORK-0047: explicit administrator catalog; never grant new capabilities implicitly.
+-- Matches src/policies/roleCatalog.ts. Existing databases use the audited operator
+-- migration, not a replay of bootstrap DDL. Financial execution is intentionally absent.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'admin' AND p.name NOT IN (
-    'role.assign.admin', 'role.assign.finance',
-    'user.delete', 'user.impersonate',
-    'system.restore', 'workflow.override', 'report.force_approve'
+WHERE r.name = 'admin' AND p.name IN (
+    'report.view.all', 'report.view.archived', 'report.export',
+    'attachment.view.all', 'attachment.download',
+    'role.create', 'role.view', 'role.edit', 'role.delete', 'role.assign',
+    'permission.view', 'permission.create', 'permission.edit', 'permission.delete',
+    'user.create', 'user.view', 'user.view.sensitive', 'user.edit', 'user.edit.own',
+    'user.deactivate', 'user.reset_password', 'user.unlock',
+    'workflow.create', 'workflow.view', 'workflow.edit', 'workflow.delete',
+    'workflow.assign', 'workflow.test', 'workflow.migrate',
+    'system.configure', 'system.view_logs', 'system.backup', 'system.integrate',
+    'system.api_keys', 'system.notification', 'system.maintenance',
+    'category.create', 'category.view', 'category.edit', 'category.delete',
+    'project.create', 'project.view', 'project.view.all', 'project.edit', 'project.delete',
+    'policy.view', 'policy.create', 'policy.edit', 'policy.delete', 'policy.check',
+    'form.view', 'form.manage', 'form.publish',
+    'audit.view', 'audit.view.all', 'audit.export', 'audit.analyze', 'compliance.view',
+    'analytics.view', 'analytics.view.sensitive', 'analytics.export', 'analytics.create',
+    'llm.query', 'llm.query.all', 'llm.insights.view', 'llm.anomaly.view',
+    'llm.history.view', 'llm.history.view.all', 'llm.semantic_search',
+    'llm.trends.view', 'llm.trends.view.all', 'llm.forecast', 'llm.budget.view',
+    'llm.policy.check', 'llm.project.query', 'llm.project.query.all',
+    'llm.template.view', 'llm.template.create', 'llm.template.edit', 'llm.template.delete'
 )
 ON CONFLICT DO NOTHING;
 
