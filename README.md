@@ -111,6 +111,7 @@ npm run dev
 | `JWT_SECRET` | JWT signing secret (min 32 chars) | required |
 | `JWT_ACCESS_EXPIRES_IN` | Access token expiry | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token expiry | `7d` |
+| `STEP_UP_TTL_SECONDS` | Lifetime of session-bound credential step-up assurance | `300` |
 
 ### OAuth
 
@@ -190,12 +191,27 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 |--------|----------|-------------|
 | POST | `/v1/auth/register` | Register with email/password |
 | POST | `/v1/auth/login` | Login with email/password |
+| POST | `/v1/auth/step-up` | Reauthenticate the current session for protected actions |
 | POST | `/v1/auth/refresh` | Refresh access token |
 | POST | `/v1/auth/logout` | Logout (revoke refresh token) |
 | GET | `/v1/auth/google` | Initiate Google OAuth |
 | GET | `/v1/auth/google/callback` | Google OAuth callback |
 | GET | `/v1/auth/facebook` | Initiate Facebook OAuth |
 | GET | `/v1/auth/facebook/callback` | Facebook OAuth callback |
+
+Protected permissions marked `requires_mfa` now require recent, server-side
+step-up evidence. On `403` with code `STEP_UP_REQUIRED`, send
+`POST /v1/auth/step-up` with the same bearer access token and JSON
+`{"password":"<current-password>"}`, then retry the protected action. The response
+returns `verifiedAt` and `expiresAt`; assurance lasts `STEP_UP_TTL_SECONDS`
+(300 seconds by default) and is bound to that active refresh-token session.
+Token rotation creates a new session record, so step-up must be repeated.
+
+Despite the legacy column name, this ceremony is password reauthentication,
+**not second-factor MFA**. OAuth-only accounts and tokens without an active
+session fail closed. MFA enrollment and external-provider step-up require a
+separate design. Clients must add the reauthentication flow before users can
+perform newly protected actions.
 
 ### Expense Reports
 
@@ -236,6 +252,14 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 | GET/POST/PUT/DELETE | `/v1/users` | User management |
 | GET/POST/PUT/DELETE | `/v1/roles` | Role management |
 | GET/POST/PUT/DELETE | `/v1/permissions` | Permission management |
+
+RBAC mutations evaluate the exact final state and commit assignments, affected
+users' `roles_version` increments, and audit events together. Existing access
+tokens for those users become invalid; refresh or sign in again before retrying.
+The active system `super_admin` role is the explicit preventive separation-of-
+duties exemption. Assigning/removing administrator roles requires additional
+stepped-up authority, and the last active, verified super-admin cannot be
+removed, deactivated, or deleted. Core control-plane permissions cannot be deleted.
 
 ### Expense Metadata
 

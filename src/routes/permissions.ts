@@ -1,13 +1,17 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, getUser } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
   listPermissions,
   getPermissionById,
-  createPermission,
-  updatePermission,
-  deletePermission,
 } from '../services/permission.service.js';
+import {
+  createPermission,
+  deletePermission,
+  updatePermission,
+  type RbacMutationActor,
+} from '../services/rbac.service.js';
+import type { JwtPayloadV3 } from '../types/index.js';
 import { NotFoundError } from '../types/index.js';
 import {
   PermissionSchema,
@@ -20,6 +24,11 @@ import {
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
 
 const permissionsRouter = new OpenAPIHono();
+
+function getRbacActor(c: Parameters<typeof getUser>[0]): RbacMutationActor {
+  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  return { id: jwt.sub, rolesVersion: jwt.roles_version, sessionId: jwt.refresh_token_id };
+}
 
 // All routes require authentication
 permissionsRouter.use('*', authMiddleware);
@@ -179,7 +188,7 @@ permissionsRouter.openapi(createPermissionRoute, async (c) => {
     category: input.category,
     riskLevel: input.riskLevel,
     requiresMfa: input.requiresMfa,
-  });
+  }, getRbacActor(c));
 
   return c.json({
     id: permission.id,
@@ -231,7 +240,7 @@ permissionsRouter.openapi(updatePermissionRoute, async (c) => {
     category: input.category,
     riskLevel: input.riskLevel,
     requiresMfa: input.requiresMfa,
-  });
+  }, getRbacActor(c));
 
   return c.json({
     id: permission.id,
@@ -253,7 +262,7 @@ const deletePermissionRoute = createRoute({
   path: '/{permissionId}',
   tags: ['Permissions'],
   summary: 'Delete a permission',
-  description: 'Delete a permission. Cannot delete permissions that are assigned to roles.',
+  description: 'Delete a permission, remove its role grants, and invalidate affected sessions atomically',
   security: [{ bearerAuth: [] }],
   middleware: [requirePermission('permission.delete')] as const,
   request: {
@@ -269,7 +278,7 @@ const deletePermissionRoute = createRoute({
       content: { 'application/json': { schema: ErrorSchema } },
     },
     409: {
-      description: 'Permission is assigned to roles',
+      description: 'Core control-plane permission cannot be deleted',
       content: { 'application/json': { schema: ErrorSchema } },
     },
   },
@@ -278,7 +287,7 @@ const deletePermissionRoute = createRoute({
 permissionsRouter.openapi(deletePermissionRoute, async (c) => {
   const { permissionId } = c.req.valid('param');
 
-  await deletePermission(permissionId);
+  await deletePermission(permissionId, getRbacActor(c));
 
   return c.json({ message: 'Permission deleted successfully' }, 200);
 });

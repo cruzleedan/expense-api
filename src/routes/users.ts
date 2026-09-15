@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
-import { authMiddleware, getUserId } from '../middleware/auth.js';
+import { authMiddleware, getUser, getUserId } from '../middleware/auth.js';
 import { getAuthUser, requireAnyPermission, requirePermission } from '../middleware/permission.js';
 import { unlockAccount, deactivateAccount, reactivateAccount } from '../services/auth.service.js';
 import {
@@ -15,8 +15,8 @@ import {
   assignRoleToUser,
   removeRoleFromUser,
   setUserRoles,
-  validateRoleAssignmentSod,
-} from '../services/permission.service.js';
+  type RbacMutationActor,
+} from '../services/rbac.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
   UserWithRolesSchema,
@@ -29,10 +29,15 @@ import {
   AddUserRoleSchema,
 } from '../schemas/user.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
-import { ForbiddenError } from '../types/index.js';
+import { ForbiddenError, type JwtPayloadV3 } from '../types/index.js';
 import { assertCanUpdateUser, assertCanViewUser } from '../policies/userAdministration.js';
 
 const usersRouter = new OpenAPIHono();
+
+function getRbacActor(c: Parameters<typeof getUser>[0]): RbacMutationActor {
+  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  return { id: jwt.sub, rolesVersion: jwt.roles_version, sessionId: jwt.refresh_token_id };
+}
 
 usersRouter.use('*', authMiddleware);
 
@@ -500,11 +505,7 @@ const setUserRolesRoute = createRoute({
 const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
-  const actor = getAuthUser(c);
-
-  const sodResult = await validateRoleAssignmentSod(id, roleIds);
-  if (!sodResult.valid) return c.json(sodResult as any, 400);
-  await setUserRoles(id, roleIds, { id: actor.id, permissions: actor.permissions });
+  await setUserRoles(id, roleIds, getRbacActor(c));
   const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);
@@ -554,11 +555,7 @@ const addUserRoleRoute = createRoute({
 const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
-  const actor = getAuthUser(c);
-
-  const sodResult = await validateRoleAssignmentSod(id, [roleId]);
-  if (!sodResult.valid) return c.json(sodResult as any, 400);
-  await assignRoleToUser(id, roleId, { id: actor.id, permissions: actor.permissions });
+  await assignRoleToUser(id, roleId, getRbacActor(c));
   const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);
@@ -596,9 +593,7 @@ const removeUserRoleRoute = createRoute({
 
 const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { id, roleId } = c.req.valid('param');
-  const actor = getAuthUser(c);
-
-  await removeRoleFromUser(id, roleId, { id: actor.id, permissions: actor.permissions });
+  await removeRoleFromUser(id, roleId, getRbacActor(c));
   const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);

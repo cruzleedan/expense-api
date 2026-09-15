@@ -26,6 +26,15 @@ const SENSITIVE_ACTIONS = [
   'emergency.override',
   'report.force_approve',
   'workflow.override',
+  'permission.create',
+  'permission.update',
+  'permission.delete',
+  'role.create',
+  'role.permissions.update',
+  'role.delete',
+  'user.role.assign',
+  'user.role.remove',
+  'user.roles.replace',
 ];
 
 /**

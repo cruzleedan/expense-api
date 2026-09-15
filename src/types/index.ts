@@ -35,6 +35,7 @@ export interface RefreshToken {
   user_agent: string | null;
   revoked_at: Date | null;
   last_used_at: Date | null;
+  step_up_verified_at: Date | null;
 }
 
 export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
@@ -226,6 +227,13 @@ export class ForbiddenError extends AppError {
   constructor(message = 'Forbidden') {
     super(403, message, 'FORBIDDEN');
     this.name = 'ForbiddenError';
+  }
+}
+
+export class StepUpRequiredError extends AppError {
+  constructor(message = 'Recent step-up authentication is required') {
+    super(403, message, 'STEP_UP_REQUIRED');
+    this.name = 'StepUpRequiredError';
   }
 }
 

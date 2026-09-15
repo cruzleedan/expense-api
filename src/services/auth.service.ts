@@ -1,13 +1,19 @@
 import * as jose from 'jose';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
-import { query } from '../db/client.js';
+import { query, transaction } from '../db/client.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { User, JwtPayload, JwtPayloadV3, AuthTokens } from '../types/index.js';
 import { UnauthorizedError, ConflictError, ValidationError } from '../types/index.js';
 import { getUserRoleNames, getUserPermissions } from './permission.service.js';
 import { canReceiveNormalTokens } from '../policies/accountAccess.js';
+import { hasValidPrivilegeClaimsVersion } from '../policies/rbac.js';
+import { logAuditEvent } from './audit.service.js';
+import {
+  acquireRbacMutationLock,
+  assertUserCanLoseControlPlaneEligibility,
+} from './rbac.service.js';
 
 const scryptAsync = promisify(scrypt);
 
@@ -54,6 +60,83 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
   const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
   const keyBuffer = Buffer.from(key, 'hex');
   return timingSafeEqual(derivedKey, keyBuffer);
+}
+
+export interface StepUpResult {
+  verifiedAt: Date;
+  expiresAt: Date;
+}
+
+/** Bind a recent credential ceremony to the refresh-token session behind this access token. */
+export async function establishSessionStepUp(
+  userId: string,
+  refreshTokenId: string | undefined,
+  password: string
+): Promise<StepUpResult> {
+  if (!refreshTokenId) {
+    throw new UnauthorizedError('This access token is not bound to an active session');
+  }
+
+  return transaction(async (client) => {
+    const userResult = await client.query<{
+      email: string;
+      password_hash: string | null;
+      is_active: boolean;
+      is_verified: boolean;
+    }>(
+      `SELECT email, password_hash, is_active, is_verified
+       FROM users
+       WHERE id = $1
+       FOR UPDATE`,
+      [userId]
+    );
+    const user = userResult.rows[0];
+    if (!user || !user.is_active || !user.is_verified) {
+      throw new UnauthorizedError('Account is not active and verified');
+    }
+    if (!user.password_hash) {
+      throw new UnauthorizedError(
+        'Password step-up is unavailable for this account; sign in with an approved step-up method'
+      );
+    }
+    if (!(await verifyPassword(password, user.password_hash))) {
+      throw new UnauthorizedError('Invalid credentials');
+    }
+
+    const assuranceResult = await client.query<{ step_up_verified_at: Date }>(
+      `UPDATE refresh_tokens
+       SET step_up_verified_at = NOW()
+       WHERE id = $1
+         AND user_id = $2
+         AND revoked_at IS NULL
+         AND expires_at > NOW()
+       RETURNING step_up_verified_at`,
+      [refreshTokenId, userId]
+    );
+    const assurance = assuranceResult.rows[0];
+    if (!assurance) {
+      throw new UnauthorizedError('The session is revoked or expired');
+    }
+
+    await logAuditEvent({
+      actorId: userId,
+      actorEmail: user.email,
+      sessionId: refreshTokenId,
+      action: 'authentication.step_up',
+      actionCategory: 'authentication',
+      resourceType: 'session',
+      resourceId: refreshTokenId,
+      metadata: { method: 'password', ttl_seconds: env.STEP_UP_TTL_SECONDS },
+      client,
+    });
+
+    return {
+      verifiedAt: assurance.step_up_verified_at,
+      expiresAt: new Date(
+        assurance.step_up_verified_at.getTime() + env.STEP_UP_TTL_SECONDS * 1000
+      ),
+    };
+  });
 }
 
 // JWT token generation - V3.0 with roles and permissions
@@ -141,6 +224,14 @@ export async function verifyAccessToken(token: string): Promise<JwtPayloadV3> {
 
     if (payload.type !== 'access') {
       throw new UnauthorizedError('Invalid token type');
+    }
+
+    if (!hasValidPrivilegeClaimsVersion({
+      roles: payload.roles,
+      permissions: payload.permissions,
+      roles_version: payload.roles_version,
+    })) {
+      throw new UnauthorizedError('Privilege claims require a current role version');
     }
 
     // Every token format must remain bound to an active, verified account.
@@ -658,12 +749,15 @@ export async function unlockAccount(userId: string): Promise<void> {
 
 // Deactivate a user account (admin function)
 export async function deactivateAccount(userId: string): Promise<void> {
-  await query(
-    `UPDATE users SET is_active = false WHERE id = $1`,
-    [userId]
-  );
-  // Also revoke all tokens
-  await revokeAllTokens(userId);
+  await transaction(async (client) => {
+    await acquireRbacMutationLock(client);
+    await assertUserCanLoseControlPlaneEligibility(client, userId, false);
+    await client.query('UPDATE users SET is_active = false WHERE id = $1', [userId]);
+    await client.query(
+      'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
+      [userId]
+    );
+  });
   logger.info('Account deactivated', { userId });
 }
 

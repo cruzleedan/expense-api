@@ -13,9 +13,10 @@ import {
   verifyGoogleIdToken,
   verifyFacebookAccessToken,
   loginWithOAuth,
+  establishSessionStepUp,
 } from '../services/auth.service.js';
 import { deleteUser, updateUser } from '../services/user.service.js';
-import { authMiddleware, getUserId } from '../middleware/auth.js';
+import { authMiddleware, getUser, getUserId } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 import { ForbiddenError, ValidationError } from '../types/index.js';
 import {
@@ -26,8 +27,11 @@ import {
   TokenResponseSchema,
   GoogleMobileLoginRequestSchema,
   FacebookMobileLoginRequestSchema,
+  StepUpRequestSchema,
+  StepUpResponseSchema,
 } from '../schemas/auth.js';
 import { ErrorSchema, MessageSchema, AuthHeaderSchema } from '../schemas/common.js';
+import type { JwtPayloadV3 } from '../types/index.js';
 
 const authRouter = new OpenAPIHono();
 
@@ -224,6 +228,45 @@ authRouter.openapi(revokeAllSessionsRoute, async (c) => {
   const userId = getUserId(c);
   await revokeAllTokens(userId);
   return c.json({ message: 'All sessions revoked' }, 200);
+});
+
+const stepUpRoute = createRoute({
+  method: 'post',
+  path: '/step-up',
+  tags: ['Authentication'],
+  summary: 'Establish recent step-up assurance',
+  description:
+    'Reauthenticate with the current password and bind short-lived step-up assurance to the current session; this is not second-factor MFA',
+  security: [{ Bearer: [] }],
+  request: {
+    headers: AuthHeaderSchema,
+    body: { content: { 'application/json': { schema: StepUpRequestSchema } } },
+  },
+  responses: {
+    200: {
+      description: 'Step-up assurance established',
+      content: { 'application/json': { schema: StepUpResponseSchema } },
+    },
+    401: {
+      description: 'Authentication or credential verification failed',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+    400: {
+      description: 'Invalid request body',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
+  },
+});
+
+authRouter.use('/step-up', authMiddleware);
+authRouter.openapi(stepUpRoute, async (c) => {
+  const { password } = c.req.valid('json');
+  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  const result = await establishSessionStepUp(jwt.sub, jwt.refresh_token_id, password);
+  return c.json({
+    verifiedAt: result.verifiedAt.toISOString(),
+    expiresAt: result.expiresAt.toISOString(),
+  }, 200);
 });
 
 // Google OAuth - initiate

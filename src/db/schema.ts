@@ -15,6 +15,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
@@ -132,6 +133,7 @@ export const refreshTokens = pgTable('refresh_tokens', {
   userAgent: text(),
   revokedAt: timestamp({ withTimezone: true, mode: 'string' }),
   lastUsedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  stepUpVerifiedAt: timestamp({ withTimezone: true, mode: 'string' }),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
 
@@ -155,9 +157,14 @@ export const permissions = pgTable('permissions', {
   description: text(),
   category: varchar({ length: 100 }),
   riskLevel: varchar({ length: 20 }),
-  requiresMfa: boolean().default(false),
+  requiresMfa: boolean().notNull().default(false),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
+}, (t) => [
+  check(
+    'permissions_critical_requires_mfa',
+    sql`${t.riskLevel} IS DISTINCT FROM 'critical' OR ${t.requiresMfa}`
+  ),
+]);
 
 export const userRoles = pgTable(
   'user_roles',

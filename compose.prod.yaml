@@ -12,6 +12,7 @@ services:
       - PORT=3000
       - DATABASE_URL=postgresql://expense_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/expense_db
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - STEP_UP_TTL_SECONDS=${STEP_UP_TTL_SECONDS:-300}
       - UPLOAD_DIR=/app/uploads
       - RECEIPT_PARSER_URL=http://receipt-parser-app:8000
       # OAuth credentials

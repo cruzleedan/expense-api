@@ -1,6 +1,6 @@
 import { randomBytes, scrypt } from 'crypto';
 import { promisify } from 'util';
-import { query } from '../db/client.js';
+import { query, transaction } from '../db/client.js';
 import type { User } from '../types/index.js';
 import { NotFoundError, ConflictError, ValidationError } from '../types/index.js';
 import {
@@ -11,6 +11,10 @@ import {
   USER_SEARCHABLE_FIELDS,
   type PaginationParams,
 } from '../utils/pagination.js';
+import {
+  acquireRbacMutationLock,
+  assertUserCanLoseControlPlaneEligibility,
+} from './rbac.service.js';
 
 const scryptAsync = promisify(scrypt);
 
@@ -357,38 +361,38 @@ export async function updateUser(
 
   values.push(userId);
 
-  const result = await query<User>(
-    `UPDATE users SET ${updates.join(', ')}
+  const updateStatement = `UPDATE users SET ${updates.join(', ')}
      WHERE id = $${paramIndex}
-     RETURNING *`,
-    values
-  );
-
-  // If user was deactivated, revoke all their tokens
-  if (input.isActive === false) {
-    await query(
-      'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
-      [userId]
-    );
-  }
+     RETURNING *`;
+  const result = input.isActive === false
+    ? await transaction(async (client) => {
+        await acquireRbacMutationLock(client);
+        await assertUserCanLoseControlPlaneEligibility(client, userId, false);
+        const updated = await client.query<User>(updateStatement, values);
+        await client.query(
+          'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
+          [userId]
+        );
+        return updated;
+      })
+    : await query<User>(updateStatement, values);
 
   return toSafeUser(result.rows[0]);
 }
 
 export async function deleteUser(userId: string): Promise<void> {
-  await getUserById(userId);
-
-  // Check if user has any expense reports
-  const reports = await query<{ count: string }>(
-    'SELECT COUNT(*) as count FROM expense_reports WHERE user_id = $1',
-    [userId]
-  );
-
-  if (parseInt(reports.rows[0].count, 10) > 0) {
-    throw new ConflictError('Cannot delete user with existing expense reports. Deactivate the user instead.');
-  }
-
-  await query('DELETE FROM users WHERE id = $1', [userId]);
+  await transaction(async (client) => {
+    await acquireRbacMutationLock(client);
+    await assertUserCanLoseControlPlaneEligibility(client, userId, false);
+    const reports = await client.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM expense_reports WHERE user_id = $1',
+      [userId]
+    );
+    if (parseInt(reports.rows[0].count, 10) > 0) {
+      throw new ConflictError('Cannot delete user with existing expense reports. Deactivate the user instead.');
+    }
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+  });
 }
 
 // Role reads used by the user administration response model. Role mutations

@@ -19,6 +19,15 @@ export const RefreshRequestSchema = z.object({
   refreshToken: z.string().optional().openapi({ description: 'Optional if sent via cookie' }),
 }).openapi('RefreshRequest');
 
+export const StepUpRequestSchema = z.object({
+  password: z.string().min(1).openapi({ description: 'Current account password' }),
+}).strict().openapi('StepUpRequest');
+
+export const StepUpResponseSchema = z.object({
+  verifiedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+}).openapi('StepUpResponse');
+
 export const GoogleMobileLoginRequestSchema = z.object({
   idToken: z.string().openapi({ description: 'Google ID token from native google_sign_in SDK' }),
 }).openapi('GoogleMobileLoginRequest');

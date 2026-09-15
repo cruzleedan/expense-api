@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     user_agent TEXT,
     revoked_at TIMESTAMP WITH TIME ZONE,
     last_used_at TIMESTAMP WITH TIME ZONE,
+    step_up_verified_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -153,7 +154,7 @@ CREATE TABLE IF NOT EXISTS permissions (
     description TEXT,
     category VARCHAR(100),  -- e.g., 'report', 'role', 'user', 'workflow', 'audit'
     risk_level VARCHAR(20) CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
-    requires_mfa BOOLEAN DEFAULT false,
+    requires_mfa BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -1753,6 +1754,24 @@ WHERE r.name = 'employee' AND p.name IN (
     'llm.policy.check', 'llm.project.query'
 )
 ON CONFLICT DO NOTHING;
+
+-- Critical capabilities always require a recent, server-side step-up ceremony.
+UPDATE permissions SET requires_mfa = true WHERE risk_level = 'critical';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'permissions_critical_requires_mfa'
+          AND conrelid = 'permissions'::regclass
+    ) THEN
+        ALTER TABLE permissions
+            ADD CONSTRAINT permissions_critical_requires_mfa
+            CHECK (risk_level IS DISTINCT FROM 'critical' OR requires_mfa);
+    END IF;
+END
+$$;
 
 -- Approver role permissions
 INSERT INTO role_permissions (role_id, permission_id)
