@@ -15,7 +15,7 @@ test('reviewed upgrades repair legacy data atomically without replaying bootstra
   assert.equal(existing.rows[0].count, 0, 'Upgrade tests require an empty disposable database');
   await pool.query(await readFile(new URL('../../src/db/schema.sql', import.meta.url), 'utf8'));
   const tables = await pool.query("SELECT COUNT(*)::int AS count FROM pg_tables WHERE schemaname = 'public'");
-  assert.equal(tables.rows[0].count, 35);
+  assert.equal(tables.rows[0].count, 36);
   const role = await pool.query<{ id: string; name: string }>("SELECT id, name FROM roles WHERE name IN ('super_admin', 'admin')");
   const rootRoleId = role.rows.find((item) => item.name === 'super_admin')!.id;
   const adminRoleId = role.rows.find((item) => item.name === 'admin')!.id;

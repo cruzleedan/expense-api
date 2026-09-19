@@ -57,8 +57,8 @@ test('RBAC transactions serialize final-state controls and invalidate stale toke
   await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [actorId, actorRoleId]);
   await pool.query(
     `INSERT INTO refresh_tokens
-       (id, user_id, token_hash, expires_at, step_up_verified_at)
-     VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW())`,
+       (id, user_id, token_hash, expires_at, step_up_verified_at, auth_version)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW(), 2)`,
     [actorSessionId, actorId, `test-${actorSessionId}`]
   );
   const actor: RbacMutationActor = { id: actorId, rolesVersion: 1, sessionId: actorSessionId };

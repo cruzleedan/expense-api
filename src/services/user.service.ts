@@ -1,8 +1,9 @@
-import { randomBytes, scrypt } from 'crypto';
-import { promisify } from 'util';
+import { hashPassword } from '../utils/password.js';
+import { validatePasswordStrength } from '../policies/password.js';
+import { assignDefaultRole, isDuplicateEmail } from './accountProvisioning.service.js';
 import { query, transaction } from '../db/client.js';
 import type { User } from '../types/index.js';
-import { NotFoundError, ConflictError, ValidationError } from '../types/index.js';
+import { NotFoundError, ConflictError } from '../types/index.js';
 import {
   getOffset,
   buildOrderByClause,
@@ -15,8 +16,6 @@ import {
   acquireRbacMutationLock,
   assertUserCanLoseControlPlaneEligibility,
 } from './rbac.service.js';
-
-const scryptAsync = promisify(scrypt);
 
 export interface UserRole {
   id: string;
@@ -79,18 +78,6 @@ function toSafeUser(user: User): SafeUser {
   return { ...safe, status: user.status ?? computeStatus(user) };
 }
 
-async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16).toString('hex');
-  const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `${salt}:${derivedKey.toString('hex')}`;
-}
-
-function validatePasswordStrength(password: string): void {
-  if (password.length < 8) {
-    throw new ValidationError('Password must be at least 8 characters');
-  }
-}
-
 export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const existing = await query<User>(
     'SELECT id FROM users WHERE email = $1',
@@ -100,7 +87,7 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
     throw new ConflictError('Email already registered');
   }
 
-  validatePasswordStrength(input.password);
+  validatePasswordStrength(input.password, input.email, input.username);
 
   if (input.managerId) {
     const manager = await query<User>(
@@ -125,36 +112,33 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const passwordHash = await hashPassword(input.password);
   const username = input.username || input.email.split('@')[0];
 
-  const result = await query<User>(
-    `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active, is_verified)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true, true)
-     RETURNING *`,
-    [
-      input.email,
-      username,
-      input.firstName ?? null,
-      input.lastName ?? null,
-      passwordHash,
-      input.departmentId ?? null,
-      input.managerId ?? null,
-      input.costCenter ?? null,
-      input.spendingProfile ? JSON.stringify(input.spendingProfile) : '{}',
-      input.llmPreferences ? JSON.stringify(input.llmPreferences) : '{}',
-    ]
-  );
+  try {
+    return await transaction(async client => {
+      const result = await client.query<User>(
+        `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active, is_verified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true, true)
+         RETURNING *`,
+        [
+          input.email,
+          username,
+          input.firstName ?? null,
+          input.lastName ?? null,
+          passwordHash,
+          input.departmentId ?? null,
+          input.managerId ?? null,
+          input.costCenter ?? null,
+          input.spendingProfile ? JSON.stringify(input.spendingProfile) : '{}',
+          input.llmPreferences ? JSON.stringify(input.llmPreferences) : '{}',
+        ]
+      );
 
-  // Assign default employee role
-  const roleResult = await query<{ id: string }>(
-    `SELECT id FROM roles WHERE name = 'employee' AND is_active = true`
-  );
-  if (roleResult.rows.length > 0) {
-    await query(
-      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [result.rows[0].id, roleResult.rows[0].id]
-    );
+      await assignDefaultRole(client, result.rows[0].id);
+      return toSafeUser(result.rows[0]);
+    });
+  } catch (error) {
+    if (isDuplicateEmail(error)) throw new ConflictError('Email already registered');
+    throw error;
   }
-
-  return toSafeUser(result.rows[0]);
 }
 
 export async function getUserById(userId: string): Promise<SafeUser> {

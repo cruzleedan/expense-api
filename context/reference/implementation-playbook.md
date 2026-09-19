@@ -67,6 +67,13 @@ For dependency changes, check `node_modules` ownership before using the host
 installation. Prefer `npm ci` in a clean container or CI environment when the
 host tree is stale or owned by another user.
 
+For authentication/session changes, read the [session lifecycle procedure](auth-session-lifecycle.md)
+for account-before-token lock ordering, committed security-error outcomes,
+issuance/linking rollback tests and client refresh/cutover gates. A thrown error
+inside a transaction undoes replay containment or failed-login counters. Shared
+session/provisioning/password modules are the authoritative seams, not route
+helpers or duplicated user-service implementations.
+
 For repeatable dependency/lockfile updates, clean-container verification,
 disposable PostgreSQL suites, OpenAPI baseline review, and production audit/SBOM
 checks, use [release quality gates](release-quality-gates.md). That procedure

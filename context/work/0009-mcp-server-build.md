@@ -89,6 +89,13 @@ Scope for this first version:
   one change this work item makes to `expense-api` itself — everything
   else about MCP lives in `expense-mcp`.
 
+WORK-0050 is the user-approved corrective successor for the per-call exchange
+detail above. WORK-0030 invalidates previous access tokens on refresh, so MCP's
+candidate now holds the per-user lock through the API call and caches a bearer
+until shortly before expiry. WORK-0009's OAuth/tool scope and single-instance
+limitations remain; its original per-call wording is historical, not a
+requirement to reintroduce rotation churn.
+
 ## Options considered
 
 Architecture and auth options were already evaluated in WORK-0008 — see

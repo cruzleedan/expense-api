@@ -30,7 +30,7 @@ test('SoD evaluates the exact supplied final permission set', () => {
 });
 
 test('privilege-bearing tokens cannot skip role-version invalidation', () => {
-  assert.equal(hasValidPrivilegeClaimsVersion({}), true);
+  assert.equal(hasValidPrivilegeClaimsVersion({}), false);
   assert.equal(hasValidPrivilegeClaimsVersion({ permissions: ['role.edit'] }), false);
   assert.equal(hasValidPrivilegeClaimsVersion({ roles: ['admin'], roles_version: 0 }), false);
   assert.equal(hasValidPrivilegeClaimsVersion({ permissions: [], roles_version: 1 }), true);

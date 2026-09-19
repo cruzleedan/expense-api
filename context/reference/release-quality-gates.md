@@ -24,7 +24,7 @@ For lockfile-only updates in a bind-mounted workspace, also isolate/mask
 Never repair this by recursively changing ownership of unrelated host files.
 
 `check` includes repository convention lint, TypeScript compilation, context and
-35-table SQL/Drizzle coverage, migration-helper checks, database-free regression
+SQL/Drizzle table coverage, migration-helper checks, database-free regression
 tests, release-tooling tests, and generated OpenAPI validation/contract parity.
 Convention lint is deliberately small; it is not a claim of comprehensive
 ESLint/static security analysis. Database suites are separate required CI checks,
@@ -44,7 +44,9 @@ also independently refuses populated databases. Required suites cover RBAC
 transactions, the administrator catalog, and bootstrap/existing-data upgrades.
 The upgrade suite uses the actual `db:apply-change` helper and reviewed WORK-0029
 SQL, including failure rollback and repeated application, then the WORK-0047
-operator migration. It does not introduce WORK-0043's migration framework.
+operator migration. WORK-0030 adds auth-lifecycle and additive identity/session
+upgrade suites, including replay/collision races and failed-write rollback.
+It does not introduce WORK-0043's migration framework.
 
 For local verification without publishing a test database port:
 

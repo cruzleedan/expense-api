@@ -48,13 +48,12 @@ export function isStepUpFresh(
   return ageMs >= 0 && ageMs <= ttlSeconds * 1000;
 }
 
-/** Pure legacy identity tokens may remain supported, but privilege claims must be versioned. */
+/** WORK-0030 accepts only explicitly versioned privilege-bearing sessions. */
 export function hasValidPrivilegeClaimsVersion(payload: {
   roles?: unknown;
   permissions?: unknown;
   roles_version?: unknown;
 }): boolean {
-  if (payload.roles === undefined && payload.permissions === undefined) return true;
   return typeof payload.roles_version === 'number'
     && Number.isInteger(payload.roles_version)
     && payload.roles_version > 0;

@@ -36,6 +36,10 @@ export interface RefreshToken {
   revoked_at: Date | null;
   last_used_at: Date | null;
   step_up_verified_at: Date | null;
+  family_id: string;
+  auth_version: number;
+  family_created_at: Date;
+  rotated_at: Date | null;
 }
 
 export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
@@ -428,6 +432,7 @@ export interface AuditLog {
 
 // Enhanced JWT payload for v3.0
 export interface JwtPayloadV3 {
+  auth_version: number;
   jti: string;          // JWT ID (unique identifier)
   sub: string;          // User ID
   email: string;

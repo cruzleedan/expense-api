@@ -1,13 +1,13 @@
 ---
 id: 0003
 title: "JWT auth: Bearer access token + HttpOnly cookie refresh token"
-status: accepted
+status: superseded
 kind: infra
 opened: 2026-08-01
 decided: 2026-08-01
 branch: ~
 supersedes: ~
-superseded-by: ~
+superseded-by: 0030
 ---
 
 # WORK-0003 — JWT auth: Bearer access token + HttpOnly cookie refresh token
@@ -15,10 +15,10 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-08-01 |
-| **Status** | accepted |
+| **Status** | superseded |
 | **Kind** | infra |
 | **Supersedes** | — |
-| **Superseded by** | — |
+| **Superseded by** | WORK-0030 |
 
 ## Problem
 
@@ -27,6 +27,13 @@ be stateless (no server-side session store) and support token refresh without
 requiring re-login.
 
 ## Decision
+
+Historical decision. On 2026-09-15 the user approved
+[WORK-0030](0030-harden-authentication-oauth-and-session-lifecycle.md) as its
+corrective successor. Bearer access and HttpOnly/secure-storage refresh remain;
+the stateless-session claim below is superseded by PostgreSQL token families,
+atomic rotation, active-session checks, and replay containment. Do not restore
+legacy-token acceptance or treat this historical design as current behavior.
 
 Two-token JWT pattern using the **`jose`** library:
 
@@ -69,6 +76,8 @@ Two-token JWT pattern using the **`jose`** library:
 
 - 2026-08-01 accepted — decision made at project inception; migrated from
   ADR-0003 to this work item format
+- 2026-09-15 superseded — explicit user approval of WORK-0030's PostgreSQL-backed
+  session lifecycle, retaining existing token transports and `jose`.
 
 ## Implementation Notes
 

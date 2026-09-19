@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import { durationSeconds } from '../policies/session.js';
+
+const jwtDuration = z.string().refine(value => {
+  try { durationSeconds(value); return true; } catch { return false; }
+}, 'Invalid JWT duration');
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -9,16 +14,16 @@ const envSchema = z.object({
 
   // JWT
   JWT_SECRET: z.string().min(32),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  JWT_ACCESS_EXPIRES_IN: jwtDuration.default('15m'),
+  JWT_REFRESH_EXPIRES_IN: jwtDuration.default('7d'),
   STEP_UP_TTL_SECONDS: z.coerce.number().int().positive().max(3600).default(300),
 
   // OAuth - Google
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
-  // Mobile (native) OAuth client ID(s) - audience for ID tokens from google_sign_in.
-  // Accepts a comma-separated list since Android/iOS use separate client IDs.
+  // Additional native audiences/presenters, alongside the configured web client.
+  // Android/iOS can use separate IDs; explicitly allow every accepted presenter.
   GOOGLE_MOBILE_CLIENT_IDS: z.string().optional(),
 
   // OAuth - Facebook

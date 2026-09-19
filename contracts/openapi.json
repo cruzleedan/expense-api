@@ -1727,7 +1727,7 @@
           "password": {
             "example": "SecureP@ss123",
             "maxLength": 128,
-            "minLength": 8,
+            "minLength": 12,
             "type": "string"
           },
           "spendingProfile": {
@@ -3080,6 +3080,65 @@
         ],
         "type": "object"
       },
+      "LinkFacebookIdentityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "accessToken": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken",
+          "password"
+        ],
+        "type": "object"
+      },
+      "LinkGoogleIdentityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idToken": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "idToken",
+          "password"
+        ],
+        "type": "object"
+      },
+      "LinkedIdentityResponse": {
+        "properties": {
+          "linked": {
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "google",
+              "facebook"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "linked"
+        ],
+        "type": "object"
+      },
       "Liveness": {
         "properties": {
           "status": {
@@ -4097,9 +4156,12 @@
         "type": "object"
       },
       "RefreshRequest": {
+        "additionalProperties": false,
         "properties": {
           "refreshToken": {
             "description": "Optional if sent via cookie",
+            "maxLength": 8192,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -4113,8 +4175,9 @@
             "type": "string"
           },
           "password": {
-            "example": "securepassword123",
-            "minLength": 8,
+            "example": "SecureP@ss123",
+            "maxLength": 128,
+            "minLength": 12,
             "type": "string"
           }
         },
@@ -4708,6 +4771,7 @@
         "properties": {
           "password": {
             "description": "Current account password",
+            "maxLength": 128,
             "minLength": 1,
             "type": "string"
           }
@@ -8290,28 +8354,9 @@
     },
     "/v1/auth/delete-account": {
       "post": {
-        "description": "Authenticate and permanently delete the account. If the account has associated expense reports, it will be deactivated and anonymized instead of hard-deleted.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
-              }
-            }
-          }
-        },
+        "description": "No account or financial data is changed; retention and pseudonymization policy is pending",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Message"
-                }
-              }
-            },
-            "description": "Account deleted or deactivated successfully"
-          },
-          "401": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8319,20 +8364,11 @@
                 }
               }
             },
-            "description": "Invalid credentials"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Internal server error"
+            "description": "Self-service deletion disabled"
           }
         },
-        "summary": "Request account deletion",
+        "security": [],
+        "summary": "Self-service account deletion is disabled",
         "tags": [
           "Authentication"
         ]
@@ -8508,6 +8544,160 @@
         ]
       }
     },
+    "/v1/auth/identities/facebook": {
+      "post": {
+        "description": "Requires an active session, current account password, and valid app-bound Facebook subject token; Facebook email is never ownership proof",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "example": "Bearer eyJhbGciOiJIUzI1NiIs...",
+              "pattern": "^Bearer .+",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkFacebookIdentityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedIdentityResponse"
+                }
+              }
+            },
+            "description": "Identity linked"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid provider proof or request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Session or account password invalid"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Identity belongs to another account"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Link a Facebook identity to the current account",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/v1/auth/identities/google": {
+      "post": {
+        "description": "Requires an active session, current account password, and Google ID token with verified email; never links by email match",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "example": "Bearer eyJhbGciOiJIUzI1NiIs...",
+              "pattern": "^Bearer .+",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkGoogleIdentityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedIdentityResponse"
+                }
+              }
+            },
+            "description": "Identity linked"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid provider proof or request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Session or account password invalid"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Identity belongs to another account"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Link a Google identity to the current account",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/v1/auth/login": {
       "post": {
         "description": "Authenticate user and return access token",
@@ -8550,7 +8740,17 @@
     },
     "/v1/auth/logout": {
       "post": {
-        "description": "Invalidate refresh token and clear cookie",
+        "description": "Revoke the session family and its access tokens, then clear the cookie; accepts cookie or body token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "content": {
@@ -8561,6 +8761,16 @@
               }
             },
             "description": "Logged out successfully"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid logout body"
           }
         },
         "summary": "Logout user",
@@ -8592,6 +8802,16 @@
               }
             },
             "description": "Token refreshed"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid refresh body or missing token"
           },
           "401": {
             "content": {
@@ -8672,7 +8892,7 @@
     },
     "/v1/auth/sessions/revoke-all": {
       "post": {
-        "description": "Revoke every refresh token issued to the authenticated user (all devices and integrations, including third-party access such as an MCP client). The current access token remains valid until it expires, but no refresh token can be used to obtain a new one — re-authentication is required.",
+        "description": "Revoke every refresh token issued to the authenticated user (all devices and integrations, including third-party access such as an MCP client). Access tokens are also invalidated; re-authentication is required.",
         "parameters": [
           {
             "in": "header",

@@ -15,7 +15,8 @@ import {
   loginWithOAuth,
   establishSessionStepUp,
 } from '../services/auth.service.js';
-import { deleteUser, updateUser } from '../services/user.service.js';
+import { linkProviderIdentity } from '../services/identity.service.js';
+import { sessionRequestMetadata, refreshCookieMaxAge } from '../utils/sessionRequest.js';
 import { authMiddleware, getUser, getUserId } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 import { ForbiddenError, ValidationError } from '../types/index.js';
@@ -29,9 +30,11 @@ import {
   FacebookMobileLoginRequestSchema,
   StepUpRequestSchema,
   StepUpResponseSchema,
+  LinkGoogleIdentityRequestSchema,
+  LinkFacebookIdentityRequestSchema,
+  LinkedIdentityResponseSchema,
 } from '../schemas/auth.js';
 import { ErrorSchema, MessageSchema, AuthHeaderSchema } from '../schemas/common.js';
-import type { JwtPayloadV3 } from '../types/index.js';
 
 const authRouter = new OpenAPIHono();
 
@@ -44,7 +47,7 @@ function setRefreshTokenCookie(c: Parameters<typeof setCookie>[0], token: string
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'Lax',
-    maxAge: 7 * 24 * 60 * 60,
+    maxAge: refreshCookieMaxAge(token),
     path: '/',
   });
 }
@@ -112,7 +115,7 @@ const loginRoute = createRoute({
 
 authRouter.openapi(loginRoute, async (c) => {
   const { email, password } = c.req.valid('json');
-  const { user, tokens } = await loginWithEmail(email, password);
+  const { user, tokens } = await loginWithEmail(email, password, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -136,6 +139,10 @@ const refreshRoute = createRoute({
     },
   },
   responses: {
+    400: {
+      description: 'Invalid refresh body or missing token',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
     200: {
       description: 'Token refreshed',
       content: { 'application/json': { schema: TokenResponseSchema } },
@@ -148,7 +155,7 @@ const refreshRoute = createRoute({
 });
 
 authRouter.openapi(refreshRoute, async (c) => {
-  const body = await c.req.json().catch(() => ({}));
+  const body = c.req.valid('json');
   const bodyToken = body?.refreshToken;
   const refreshToken = bodyToken ?? getCookie(c, 'refreshToken');
 
@@ -156,7 +163,7 @@ authRouter.openapi(refreshRoute, async (c) => {
     throw new ValidationError('Refresh token required');
   }
 
-  const tokens = await refreshTokens(refreshToken);
+  const tokens = await refreshTokens(refreshToken, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -169,8 +176,15 @@ const logoutRoute = createRoute({
   path: '/logout',
   tags: ['Authentication'],
   summary: 'Logout user',
-  description: 'Invalidate refresh token and clear cookie',
+  description: 'Revoke the session family and its access tokens, then clear the cookie; accepts cookie or body token',
+  request: {
+    body: { content: { 'application/json': { schema: RefreshRequestSchema } }, required: false },
+  },
   responses: {
+    400: {
+      description: 'Invalid logout body',
+      content: { 'application/json': { schema: ErrorSchema } },
+    },
     200: {
       description: 'Logged out successfully',
       content: { 'application/json': { schema: MessageSchema } },
@@ -179,7 +193,7 @@ const logoutRoute = createRoute({
 });
 
 authRouter.openapi(logoutRoute, async (c) => {
-  const refreshToken = getCookie(c, 'refreshToken');
+  const refreshToken = c.req.valid('json')?.refreshToken ?? getCookie(c, 'refreshToken');
 
   if (refreshToken) {
     await logout(refreshToken);
@@ -204,8 +218,7 @@ const revokeAllSessionsRoute = createRoute({
   summary: 'Revoke all sessions',
   description:
     'Revoke every refresh token issued to the authenticated user (all devices and integrations, ' +
-    'including third-party access such as an MCP client). The current access token remains valid ' +
-    'until it expires, but no refresh token can be used to obtain a new one — re-authentication is required.',
+    'including third-party access such as an MCP client). Access tokens are also invalidated; re-authentication is required.',
   security: [{ Bearer: [] }],
   request: {
     headers: AuthHeaderSchema,
@@ -261,7 +274,7 @@ const stepUpRoute = createRoute({
 authRouter.use('/step-up', authMiddleware);
 authRouter.openapi(stepUpRoute, async (c) => {
   const { password } = c.req.valid('json');
-  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  const jwt = getUser(c);
   const result = await establishSessionStepUp(jwt.sub, jwt.refresh_token_id, password);
   return c.json({
     verifiedAt: result.verifiedAt.toISOString(),
@@ -286,7 +299,7 @@ const googleAuthRoute = createRoute({
 authRouter.openapi(googleAuthRoute, (c) => {
   const state = randomBytes(16).toString('hex');
 
-  setCookie(c, 'oauth_state', state, {
+  setCookie(c, 'oauth_state_google', state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'Lax',
@@ -320,16 +333,16 @@ const googleCallbackRoute = createRoute({
 authRouter.openapi(googleCallbackRoute, async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
-  const storedState = getCookie(c, 'oauth_state');
+  const storedState = getCookie(c, 'oauth_state_google');
 
   if (!code || !state || state !== storedState) {
     throw new ValidationError('Invalid OAuth callback');
   }
 
-  setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
+  setCookie(c, 'oauth_state_google', '', { maxAge: 0, path: '/' });
 
   const googleUser = await exchangeGoogleCode(code);
-  const { user, tokens } = await loginWithOAuth('google', googleUser.id, googleUser.email);
+  const { user, tokens } = await loginWithOAuth('google', googleUser.id, googleUser.email, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -356,7 +369,7 @@ const facebookAuthRoute = createRoute({
 authRouter.openapi(facebookAuthRoute, (c) => {
   const state = randomBytes(16).toString('hex');
 
-  setCookie(c, 'oauth_state', state, {
+  setCookie(c, 'oauth_state_facebook', state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'Lax',
@@ -390,16 +403,16 @@ const facebookCallbackRoute = createRoute({
 authRouter.openapi(facebookCallbackRoute, async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state');
-  const storedState = getCookie(c, 'oauth_state');
+  const storedState = getCookie(c, 'oauth_state_facebook');
 
   if (!code || !state || state !== storedState) {
     throw new ValidationError('Invalid OAuth callback');
   }
 
-  setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
+  setCookie(c, 'oauth_state_facebook', '', { maxAge: 0, path: '/' });
 
   const facebookUser = await exchangeFacebookCode(code);
-  const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email);
+  const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -437,7 +450,7 @@ authRouter.openapi(googleMobileLoginRoute, async (c) => {
   const { idToken } = c.req.valid('json');
 
   const googleUser = await verifyGoogleIdToken(idToken);
-  const { user, tokens } = await loginWithOAuth('google', googleUser.id, googleUser.email);
+  const { user, tokens } = await loginWithOAuth('google', googleUser.id, googleUser.email, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -475,7 +488,7 @@ authRouter.openapi(facebookMobileLoginRoute, async (c) => {
   const { accessToken } = c.req.valid('json');
 
   const facebookUser = await verifyFacebookAccessToken(accessToken);
-  const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email);
+  const { user, tokens } = await loginWithOAuth('facebook', facebookUser.id, facebookUser.email, ...sessionRequestMetadata(c));
 
   setRefreshTokenCookie(c, tokens.refreshToken);
 
@@ -485,64 +498,67 @@ authRouter.openapi(facebookMobileLoginRoute, async (c) => {
   }, 200);
 });
 
-// Request account deletion route
-const deleteAccountRequestSchema = LoginRequestSchema;
-
-const deleteAccountRoute = createRoute({
-  method: 'post',
-  path: '/delete-account',
-  tags: ['Authentication'],
-  summary: 'Request account deletion',
-  description:
-    'Authenticate and permanently delete the account. If the account has associated expense reports, it will be deactivated and anonymized instead of hard-deleted.',
-  request: {
-    body: {
-      content: { 'application/json': { schema: deleteAccountRequestSchema } },
-    },
-  },
+// Explicit capability: link a verified provider subject to one's own account,
+// requiring current session + password. No administrator capability or client userId.
+const linkGoogleRoute = createRoute({
+  method: 'post', path: '/identities/google', tags: ['Authentication'],
+  summary: 'Link a Google identity to the current account',
+  description: 'Requires an active session, current account password, and Google ID token with verified email; never links by email match',
+  security: [{ Bearer: [] }],
+  request: { headers: AuthHeaderSchema, body: { content: { 'application/json': { schema: LinkGoogleIdentityRequestSchema } } } },
   responses: {
-    200: {
-      description: 'Account deleted or deactivated successfully',
-      content: { 'application/json': { schema: MessageSchema } },
-    },
-    401: {
-      description: 'Invalid credentials',
-      content: { 'application/json': { schema: ErrorSchema } },
-    },
-    500: {
-      description: 'Internal server error',
-      content: { 'application/json': { schema: ErrorSchema } },
-    },
+    200: { description: 'Identity linked', content: { 'application/json': { schema: LinkedIdentityResponseSchema } } },
+    400: { description: 'Invalid provider proof or request', content: { 'application/json': { schema: ErrorSchema } } },
+    401: { description: 'Session or account password invalid', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Identity belongs to another account', content: { 'application/json': { schema: ErrorSchema } } },
   },
 });
+authRouter.use('/identities/google', authMiddleware);
+authRouter.openapi(linkGoogleRoute, async c => {
+  const body = c.req.valid('json');
+  const identity = await verifyGoogleIdToken(body.idToken);
+  const actor = getUser(c);
+  const result = await linkProviderIdentity({ ...actor, sub: getUserId(c) }, 'google', identity.id, body.password);
+  return c.json(result, 200);
+});
+const linkFacebookRoute = createRoute({
+  method: 'post', path: '/identities/facebook', tags: ['Authentication'],
+  summary: 'Link a Facebook identity to the current account',
+  description: 'Requires an active session, current account password, and valid app-bound Facebook subject token; Facebook email is never ownership proof',
+  security: [{ Bearer: [] }],
+  request: { headers: AuthHeaderSchema, body: { content: { 'application/json': { schema: LinkFacebookIdentityRequestSchema } } } },
+  responses: {
+    200: { description: 'Identity linked', content: { 'application/json': { schema: LinkedIdentityResponseSchema } } },
+    400: { description: 'Invalid provider proof or request', content: { 'application/json': { schema: ErrorSchema } } },
+    401: { description: 'Session or account password invalid', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Identity belongs to another account', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+authRouter.use('/identities/facebook', authMiddleware);
+authRouter.openapi(linkFacebookRoute, async c => {
+  const body = c.req.valid('json');
+  const identity = await verifyFacebookAccessToken(body.accessToken);
+  const actor = getUser(c);
+  const result = await linkProviderIdentity({ ...actor, sub: getUserId(c) }, 'facebook', identity.id, body.password);
+  return c.json(result, 200);
+});
 
-authRouter.openapi(deleteAccountRoute, async (c) => {
-  const { email, password } = c.req.valid('json');
-
-  // Authenticate the user — this verifies the password and throws if invalid
-  const { user } = await loginWithEmail(email, password);
-
-  try {
-    await deleteUser(user.id);
-    return c.json({ message: 'Your account and all associated data have been permanently deleted.' }, 200);
-  } catch {
-    // User has expense reports; deactivate and anonymize instead
-    await updateUser(user.id, {
-      isActive: false,
-      firstName: null,
-      lastName: null,
-      departmentId: null,
-      managerId: null,
-      costCenter: null,
-    });
-    return c.json(
-      {
-        message:
-          'Your account has been deactivated and personal information removed. Financial records are retained for auditing purposes.',
-      },
-      200
-    );
-  }
+// Fail closed BEFORE body validation/authentication: no login, session minting,
+// erasure, deactivation, or false pseudonymization claim (approved WORK-0048 deferral).
+authRouter.use('/delete-account', async () => {
+  throw new ForbiddenError('Self-service account deletion is disabled pending an approved retention policy; contact an administrator');
+});
+const deleteAccountRoute = createRoute({
+  method: 'post', path: '/delete-account', tags: ['Authentication'],
+  summary: 'Self-service account deletion is disabled',
+  security: [],
+  description: 'No account or financial data is changed; retention and pseudonymization policy is pending',
+  responses: {
+    403: { description: 'Self-service deletion disabled', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+authRouter.openapi(deleteAccountRoute, async () => {
+  throw new ForbiddenError('Self-service account deletion is disabled pending an approved retention policy');
 });
 
 export { authRouter };

@@ -13,6 +13,7 @@ skills, and review friction:
 | `friction.md` | Context/process problems rather than application defects | Triage separately |
 | `reference/implementation-playbook.md` | Mandatory, maintained work-item implementation procedure | Procedural guidance |
 | `reference/release-quality-gates.md` | Clean dependency verification, isolated database suites, OpenAPI/SBOM/audit and rollout policy | Procedural guidance; transferred coverage criteria live in WORK-0034/0040/0041 |
+| `reference/auth-session-lifecycle.md` | Session/identity contract, locking, rollback and client cutover procedure | Candidate behavior; consult WORK-0030 deployment status |
 
 The 2026-09-14 defect and architecture review is indexed in
 `reviews/2026-09-14-expense-api-architecture-audit.md`. It created proposed
@@ -32,3 +33,9 @@ owner-scoped sync-race, and multi-worker job-idempotency requirements to
 WORK-0040, WORK-0034, and WORK-0041. Those items retain unchecked mandatory CI
 criteria and remain proposed; coverage ownership is not implementation approval
 or proof of full ERP release readiness.
+
+WORK-0030 is implemented and repository-verified but remains `building`.
+WORK-0049 and WORK-0050 are approved and building in separate client branches;
+disposable browser/MCP tests pass, but deployment, native-client inspection and
+other release gates remain open. WORK-0048 records the approved deferral of
+retention design and remains proposed. The live API still uses the prior runtime.

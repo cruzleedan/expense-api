@@ -120,6 +120,7 @@ npm run dev
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | optional |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | optional |
 | `GOOGLE_REDIRECT_URI` | Google OAuth redirect URI | optional |
+| `GOOGLE_MOBILE_CLIENT_IDS` | Comma-separated native/link-token audiences and presenters | optional |
 | `FACEBOOK_CLIENT_ID` | Facebook OAuth client ID | optional |
 | `FACEBOOK_CLIENT_SECRET` | Facebook OAuth client secret | optional |
 | `FACEBOOK_REDIRECT_URI` | Facebook OAuth redirect URI | optional |
@@ -189,15 +190,27 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/v1/auth/register` | Register with email/password |
+| POST | `/v1/auth/register` | Disabled; administrator provisioning required |
 | POST | `/v1/auth/login` | Login with email/password |
 | POST | `/v1/auth/step-up` | Reauthenticate the current session for protected actions |
 | POST | `/v1/auth/refresh` | Refresh access token |
-| POST | `/v1/auth/logout` | Logout (revoke refresh token) |
+| POST | `/v1/auth/logout` | Revoke family/access tokens (cookie or body) |
+| POST | `/v1/auth/sessions/revoke-all` | Revoke all own sessions and access tokens |
+| POST | `/v1/auth/identities/google` | Link verified Google proof with current session/password |
+| POST | `/v1/auth/identities/facebook` | Link app-bound Facebook proof with current session/password |
+| POST | `/v1/auth/delete-account` | Disabled pending retention policy; no data changed |
 | GET | `/v1/auth/google` | Initiate Google OAuth |
 | GET | `/v1/auth/google/callback` | Google OAuth callback |
 | GET | `/v1/auth/facebook` | Initiate Facebook OAuth |
 | GET | `/v1/auth/facebook/callback` | Facebook OAuth callback |
+
+WORK-0030 requires signing in again after its `auth_version=2` cutover. Access
+tokens require an active database session; rotation/revocation invalidate them.
+Clients must single-flight refresh and retain the new refresh cookie: reusing
+a rotated token revokes its family. OAuth signs in only already-linked subjects;
+matching emails never link/provision accounts. See the [session lifecycle and
+client cutover](context/reference/auth-session-lifecycle.md) for proof, transport,
+migration, recovery and external coordination.
 
 Protected permissions marked `requires_mfa` now require recent, server-side
 step-up evidence. On `403` with code `STEP_UP_REQUIRED`, send
@@ -350,7 +363,9 @@ pgvector databases: `ADMIN_CATALOG_INTEGRATION=1` for
 
 ## Usage Examples
 
-### Register a User
+### Public Registration (Disabled)
+
+This request returns 403; use authorized administrator provisioning instead.
 
 ```bash
 curl -X POST http://localhost:3002/v1/auth/register \
@@ -396,7 +411,8 @@ curl -X POST http://localhost:3002/v1/expense-reports/<report_id>/receipts \
 
 The database uses PostgreSQL 16 with pgvector. Tables:
 - `users` - User accounts
-- `refresh_tokens` - JWT refresh token storage
+- `refresh_tokens` - Hashed JWT ledger, token families and revocation/rotation
+- `user_identities` - Unique provider subjects and explicit account bindings
 - `expense_reports` - Expense reports
 - `expense_lines` - Individual expense items
 - `receipts` - Uploaded receipt files

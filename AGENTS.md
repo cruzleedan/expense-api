@@ -373,7 +373,8 @@ npm run db:apply-change -- path/to/change.sql
 
 Architectural decisions and proposals live in `context/work/` (see
 `context/work/0002-dual-data-access-sql-and-drizzle.md` for the Drizzle/SQL
-split, `context/work/0003-jwt-bearer-plus-httponly-cookie.md` for auth,
+split, `context/work/0030-harden-authentication-oauth-and-session-lifecycle.md`
+for auth (supersedes WORK-0003's stateless-session claim),
 `context/work/0007-bulk-expense-line-creation.md` for the ICR bulk-create
 endpoint). Release conventions are in `context/RELEASING.md`. Log framework
 friction (not code bugs) in `context/friction.md`.

@@ -72,8 +72,8 @@ test('administrator catalog migration is atomic, repeatable, and compatible with
   await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [financeAdminId, roleIds.get('finance')]);
   await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [unaffectedUserId, roleIds.get('finance')]);
   await pool.query(
-    `INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, step_up_verified_at)
-     VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW())`,
+    `INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, step_up_verified_at, auth_version)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', NOW(), 2)`,
     [rootSessionId, rootId, `catalog-session-${rootSessionId}`]
   );
 

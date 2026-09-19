@@ -7,7 +7,7 @@ export const AuthUserSchema = z.object({
 
 export const RegisterRequestSchema = z.object({
   email: z.string().email().openapi({ example: 'user@example.com' }),
-  password: z.string().min(8).openapi({ example: 'securepassword123' }),
+  password: z.string().min(12).max(128).openapi({ example: 'SecureP@ss123' }),
 }).openapi('RegisterRequest');
 
 export const LoginRequestSchema = z.object({
@@ -16,11 +16,11 @@ export const LoginRequestSchema = z.object({
 }).openapi('LoginRequest');
 
 export const RefreshRequestSchema = z.object({
-  refreshToken: z.string().optional().openapi({ description: 'Optional if sent via cookie' }),
-}).openapi('RefreshRequest');
+  refreshToken: z.string().min(1).max(8192).optional().openapi({ description: 'Optional if sent via cookie' }),
+}).strict().openapi('RefreshRequest');
 
 export const StepUpRequestSchema = z.object({
-  password: z.string().min(1).openapi({ description: 'Current account password' }),
+  password: z.string().min(1).max(128).openapi({ description: 'Current account password' }),
 }).strict().openapi('StepUpRequest');
 
 export const StepUpResponseSchema = z.object({
@@ -44,3 +44,17 @@ export const AuthResponseSchema = z.object({
 export const TokenResponseSchema = z.object({
   accessToken: z.string(),
 }).openapi('TokenResponse');
+
+export const LinkGoogleIdentityRequestSchema = z.object({
+  idToken: z.string().min(1).max(8192),
+  password: z.string().min(1).max(128),
+}).strict().openapi('LinkGoogleIdentityRequest');
+
+export const LinkFacebookIdentityRequestSchema = z.object({
+  accessToken: z.string().min(1).max(8192),
+  password: z.string().min(1).max(128),
+}).strict().openapi('LinkFacebookIdentityRequest');
+
+export const LinkedIdentityResponseSchema = z.object({
+  provider: z.enum(['google', 'facebook']), linked: z.boolean(),
+}).openapi('LinkedIdentityResponse');

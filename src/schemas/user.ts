@@ -39,7 +39,7 @@ export const CreateUserSchema = z.object({
   username: z.string().min(1).max(255).optional().openapi({ example: 'johndoe' }),
   firstName: z.string().max(100).optional().openapi({ example: 'John' }),
   lastName: z.string().max(100).optional().openapi({ example: 'Doe' }),
-  password: z.string().min(8).max(128).openapi({ example: 'SecureP@ss123' }),
+  password: z.string().min(12).max(128).openapi({ example: 'SecureP@ss123' }),
   departmentId: z.string().uuid().optional(),
   managerId: z.string().uuid().optional(),
   costCenter: z.string().max(50).optional(),

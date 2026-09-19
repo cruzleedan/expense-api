@@ -17,6 +17,8 @@ const suites = [
   { name: 'rbac', flag: 'RBAC_INTEGRATION', file: 'dist/services/rbac.integration.test.js' },
   { name: 'catalog', flag: 'ADMIN_CATALOG_INTEGRATION', file: 'dist/services/roleCatalog.integration.test.js' },
   { name: 'upgrade', flag: 'SCHEMA_UPGRADE_INTEGRATION', file: 'dist/db/schemaUpgrade.integration.test.js' },
+  { name: 'auth', flag: 'AUTH_INTEGRATION', file: 'dist/services/auth.integration.test.js' },
+  { name: 'auth_upgrade', flag: 'AUTH_UPGRADE_INTEGRATION', file: 'dist/db/authUpgrade.integration.test.js' },
 ];
 
 try {
@@ -36,6 +38,7 @@ try {
             ...process.env, NODE_ENV: 'test', DATABASE_URL: suiteUrl.toString(),
             JWT_SECRET: 'test-only-secret-that-is-at-least-32-characters',
             RBAC_INTEGRATION: '0', ADMIN_CATALOG_INTEGRATION: '0', SCHEMA_UPGRADE_INTEGRATION: '0',
+            AUTH_INTEGRATION: '0', AUTH_UPGRADE_INTEGRATION: '0',
             [suite.flag]: '1',
           },
         });
@@ -47,7 +50,7 @@ try {
       await control.query(`DROP DATABASE "${database}" WITH (FORCE)`);
     }
   }
-  process.stdout.write('test-postgres: OK (isolated bootstrap, RBAC, catalog, and existing-database upgrades)\n');
+  process.stdout.write('test-postgres: OK (isolated bootstrap, RBAC, catalog, auth lifecycle, and existing-database upgrades)\n');
 } finally {
   await control.end();
 }

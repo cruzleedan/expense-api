@@ -134,8 +134,31 @@ export const refreshTokens = pgTable('refresh_tokens', {
   revokedAt: timestamp({ withTimezone: true, mode: 'string' }),
   lastUsedAt: timestamp({ withTimezone: true, mode: 'string' }),
   stepUpVerifiedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  familyId: uuid().notNull().defaultRandom(),
+  authVersion: integer().notNull().default(1),
+  familyCreatedAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  rotatedAt: timestamp({ withTimezone: true, mode: 'string' }),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex('idx_refresh_tokens_hash_unique').on(table.tokenHash),
+  check('refresh_tokens_auth_version_check', sql`${table.authVersion} > 0`),
+  uniqueIndex('idx_refresh_tokens_active_family').on(table.familyId).where(sql`${table.revokedAt} IS NULL`),
+  index('idx_refresh_tokens_user_family').on(table.userId, table.familyId),
+]);
+
+export const userIdentities = pgTable('user_identities', {
+  id: uuid().primaryKey().defaultRandom(),
+  userId: uuid().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  provider: varchar({ length: 50 }).notNull(),
+  subject: varchar({ length: 255 }).notNull(),
+  createdAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+}, (table) => [
+  unique('user_identities_provider_subject_unique').on(table.provider, table.subject),
+  check('user_identities_provider_check', sql`${table.provider} IN ('google', 'facebook')`),
+  check('user_identities_subject_check', sql`length(btrim(${table.subject})) > 0`),
+  index('idx_user_identities_user').on(table.userId),
+]);
 
 // ============================================================================
 // RBAC
