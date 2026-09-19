@@ -271,6 +271,15 @@ alternative proof ceremony. See the session reference for the explicit policy.
   `verify:openapi` failure was caused by an incomplete local `node_modules`
   missing `@apidevtools/swagger-parser`, not by a contract failure. This does
   not clear the separate client, production and incident gates above.
+- 2026-09-19 push and deployment decision — the WORK-0030, WORK-0049 and
+  WORK-0050 branches were pushed to their respective origins. Read-only review
+  of the Flutter `expense` repository at `56ba577` found uncoordinated direct
+  biometric and interceptor refresh paths; strict one-time rotation can turn
+  concurrent use into family revocation. WORK-0049 records the source evidence.
+  The native build actually installed on devices remains unknown, and frontend
+  lint, full client/provider smoke and earlier incident gates remain open.
+  Production SQL/API/frontend deployment was not started; the live image and
+  database remain on their pre-cutover versions. Status stays building.
 
 ---
 

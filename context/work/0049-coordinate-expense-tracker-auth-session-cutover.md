@@ -127,3 +127,17 @@ creation policy, without rejecting historically weaker passwords at normal login
   separate Expense Flutter app. Read-only SSH to the documented VM address was
   denied (`Permission denied (publickey,password)`), so its transport and
   reauthentication behavior remain unverified and cutover stays held.
+- 2026-09-19 native source follow-up — after the three candidate branches were
+  pushed, read-only inspection of the private `expense` Flutter repository's
+  default-branch commit `56ba577` found a concrete cutover hazard.
+  `lib/shared/data/services/remote/api_client.dart` serializes interceptor-
+  triggered 401 refreshes with `_refreshCompleter`, but public
+  `refreshSession()` calls `_doRefresh()` directly; biometric unlock calls that
+  public method. Concurrent biometric and 401 refreshes can therefore send the
+  same stored token twice, which WORK-0030 treats as replay and revokes the
+  family. Late 401s also rotate without first checking a newer stored bearer,
+  potentially invalidating an in-flight retry. The client does parse and store
+  the rotated cookie, so transport is not the blocker. The VM working tree and
+  released app version were not inspected. No Flutter code was changed; its
+  compatibility fix, verification, and rollout need separate approval before
+  the API cutover.
