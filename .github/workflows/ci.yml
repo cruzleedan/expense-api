@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -45,8 +45,8 @@ jobs:
           --health-cmd "pg_isready -U expense_test -d expense_test_control"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build audited production image with embedded SBOM
         run: docker build --target production -t expense-api-ci .
       - name: Fresh production-image audit independent of Docker build cache
@@ -72,7 +72,7 @@ jobs:
         run: docker run --rm -v "${PWD}/scripts/verify-sbom.mjs:/app/verify-sbom.mjs:ro" expense-api-ci node verify-sbom.mjs
       - name: Save actual production dependency SBOM
         run: docker run --rm expense-api-ci node -e 'process.stdout.write(require("fs").readFileSync("/app/sbom.cdx.json"))' > sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: production-sbom
           path: sbom.cdx.json
