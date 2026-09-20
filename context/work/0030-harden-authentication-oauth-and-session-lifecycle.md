@@ -140,6 +140,7 @@ Decisions to resolve before implementation:
 - [WORK-0045 — committed release-quality infrastructure](0045-remediate-dependencies-and-establish-release-quality-gates.md)
 - [Repeatable verification and disposable PostgreSQL procedure](../reference/release-quality-gates.md)
 - [Session behavior, migration and client contract](../reference/auth-session-lifecycle.md)
+- [Mobile developer handoff and native compatibility checklist](../reviews/2026-09-20-mobile-auth-cutover-handoff.md)
 - [WORK-0048 — proposed retention-policy decision](0048-account-retention-and-pseudonymization-policy.md)
 - [WORK-0049 — proposed frontend compatibility/cutover gate](0049-coordinate-expense-tracker-auth-session-cutover.md)
 - [WORK-0050 — proposed MCP compatibility/cutover gate](0050-coordinate-expense-mcp-auth-session-cutover.md)

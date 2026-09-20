@@ -22,6 +22,10 @@ The 2026-09-14 defect and architecture review is indexed in
 and WORK-0033, shipped on 2026-09-15; all individual records remain
 authoritative and this index does not approve any proposed follow-on item.
 
+The dated mobile-developer handoff for the pending WORK-0030 auth cutover is
+`reviews/2026-09-20-mobile-auth-cutover-handoff.md`. It summarizes the candidate
+API/client changes and the Flutter refresh issues to verify before rollout.
+
 WORK-0046 codifies the durable implementation and verification process learned
 while shipping those blockers. Future implementation sessions must start with
 `reference/implementation-playbook.md` rather than reconstructing the process
