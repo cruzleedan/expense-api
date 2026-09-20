@@ -7,11 +7,16 @@ against the implemented, **not yet deployed** authentication changes in
 [WORK-0030](../work/0030-harden-authentication-oauth-and-session-lifecycle.md),
 [WORK-0049](../work/0049-coordinate-expense-tracker-auth-session-cutover.md),
 and [WORK-0050](../work/0050-coordinate-expense-mcp-auth-session-cutover.md).
-It describes candidate code, not the current production API. The three
-candidate branches were pushed, but the production SQL/API and web rollout was
-held after a native refresh race was found. Confirm the current deployment and
-the Flutter build actually installed on devices before testing or planning the
-cutover. No Flutter code was changed in this work.
+It describes the proposed cutover behavior, not the current production API.
+The WORK-0030 API code was merged into `main` in PR #17; subsequent dependency
+updates were also merged. The WORK-0049 frontend and WORK-0050 MCP changes
+remain on separate pushed branches. As rechecked on 2026-09-20, d3 still runs
+the pre-cutover API image, the additive session/identity schema is absent, and
+the web rollout has not occurred. Repository merges do not authorize the
+production cutover: a native refresh race and the other release gates below
+remain open. Confirm the deployment and the Flutter build actually installed
+on devices before testing or planning the cutover. No Flutter code was changed
+in this work.
 
 The detailed server contract and rollout constraints are in
 [auth-session-lifecycle.md](../reference/auth-session-lifecycle.md).
@@ -24,11 +29,13 @@ The detailed server contract and rollout constraints are in
 | `expense-tracker` / WORK-0049 | Browser tabs coordinate login/logout/refresh with Web Locks, hand off the latest bearer through local storage, recover stale 401s for the same account, and stop advertising public registration or erasure. | Browser Web Locks/local storage are **not** a mobile implementation recipe; Flutter needs equivalent coordination for every refresh entry point. |
 | `expense-mcp` / WORK-0050 | Each user's API token exchange and downstream API call share one lock; a current access JWT is cached until shortly before expiry. Failed/uncertain mutations are not automatically replayed. | Guarding only the refresh HTTP call is insufficient if another consumer can rotate before an in-flight request authenticates. |
 
-The API and both clients passed clean builds and isolated browser/MCP tests
-against a disposable WORK-0030 API/PostgreSQL fixture. This is **not** evidence
-that the Flutter app or real provider login works with the new server. The
-frontend's pre-existing ESLint-9 configuration gap, full provider/client smoke,
-and other recorded release gates remain open.
+On 2026-09-19, the API and both clients passed clean builds and isolated
+browser/MCP tests against a disposable WORK-0030 API/PostgreSQL fixture. Those
+cross-client tests predate the later API merges, including the coordinated
+Zod 4/OpenAPI dependency upgrade; repeat them against current `main` before
+cutover. They are **not** evidence that the Flutter app or real provider login
+works with the new server. The frontend's pre-existing ESLint-9 configuration
+gap, full provider/client smoke, and other recorded release gates remain open.
 
 ## Candidate API contract relevant to Flutter
 
@@ -45,7 +52,7 @@ refresh token is **not** in the JSON response.
 | `POST /auth/logout` | Accepts cookie or optional JSON refresh token, revokes that session family, clears the cookie, and invalidates its access token. |
 | `POST /auth/sessions/revoke-all` | Requires the current bearer; revokes all the account's device/integration sessions and their access tokens. Every client must sign in again. |
 | `POST /auth/identities/google` / `POST /auth/identities/facebook` | New explicit linking endpoints. Require current bearer **and current account password** plus `{idToken,password}` or `{accessToken,password}` respectively. They link the verified subject to that same account; a subject owned by another account gets 409. |
-| `POST /auth/delete-account` / `POST /auth/register` | Self-service deletion and public registration remain closed (403). Deletion does not authenticate, remove, deactivate, or anonymize an account. Do not promise erasure or collect deletion credentials in the app. |
+| `POST /auth/delete-account` / `POST /auth/register` | Self-service deletion returns 403 before validation or authentication. Public registration rejects valid requests with 403, but malformed bodies may return 400 during validation first. Deletion does not authenticate, remove, deactivate, or anonymize an account. Do not promise erasure or collect deletion credentials in the app. |
 
 The refresh cookie is HttpOnly, SameSite=Lax, path `/`, Secure in production,
 with `Max-Age` based on the configured refresh-token expiry (rather than a
@@ -76,9 +83,10 @@ recovery/proof design is approved.
 ## Flutter source review: concrete compatibility work
 
 Read-only review of the private Flutter `expense` repository at default-branch
-commit `56ba577` on 2026-09-19 found the following. The `flutter-dev` VM working
-tree and released mobile binary were **not** inspected; recheck them before
-assuming these lines match the installed app.
+commit `56ba577` on 2026-09-19 found the following; its default branch still
+pointed to that commit on 2026-09-20. The `flutter-dev` VM working tree and
+released mobile binary were **not** inspected (VM SSH access was denied);
+recheck them before assuming these lines match the installed app.
 
 1. `lib/shared/data/services/remote/api_client.dart` single-flights only
    interceptor-triggered 401 refreshes through `_refreshCompleter`.
@@ -118,6 +126,11 @@ assuming these lines match the installed app.
    linking flow using the new endpoint and current password, or make the
    limitation clear in the UI. Check native Google client IDs against the
    server's configured allow-list; do not hardcode provider secrets.
+8. `lib/features/auth/data/services/remote/auth_api_service.dart` logs the
+   complete email-login and provider-login response, including `accessToken`.
+   `lib/shared/utils/logger.dart` also copies info messages into Sentry
+   breadcrumbs. Remove or redact these response logs before cutover; access
+   tokens must not appear in device logs or telemetry.
 
 The existing Flutter client **does** parse `Set-Cookie` on login/provider login
 and refresh. That transport compatibility was observed in source, not verified
@@ -143,7 +156,11 @@ the concurrency problem.
   a coordinated smoke plan.
 - Review any registration, account-deletion, password-creation/reset, session,
   and sign-out UI for truthful behavior under the candidate API.
+- Verify login/provider response logging is removed or redacted in the Flutter
+  build, including Sentry breadcrumbs; do not capture bearer or refresh tokens
+  in diagnostics.
 
-Do not deploy WORK-0030's SQL/API cutover merely because the pushed branches
-build: it rejects existing sessions, has no safe automatic rollback to the old
-auth behavior, and the native-client and other release gates remain open.
+Do not deploy WORK-0030's SQL/API cutover merely because the API is merged or
+the client branches build: it rejects existing sessions, has no safe automatic
+rollback to the old auth behavior, and the native-client and other release
+gates remain open.
