@@ -1,7 +1,10 @@
 import type { MiddlewareHandler, Context } from 'hono';
 import { ForbiddenError, UnauthorizedError } from '../types/index.js';
 import type { AuthUser, JwtPayloadV3 } from '../types/index.js';
-import { checkPermissionsFromContext } from '../services/permission.service.js';
+import {
+  assertPermissionStepUp,
+  checkPermissionsFromContext,
+} from '../services/permission.service.js';
 
 // Extend Hono's context to include v3 auth types
 declare module 'hono' {
@@ -59,6 +62,8 @@ export function requirePermission(...permissions: string[]): MiddlewareHandler {
       throw new ForbiddenError(result.reason || 'Insufficient permissions');
     }
 
+    await assertPermissionStepUp(user.sub, user.refresh_token_id, permissions);
+
     await next();
   };
 }
@@ -106,6 +111,12 @@ export function requireAnyPermission(...permissions: string[]): MiddlewareHandle
         `Requires one of: ${permissions.join(', ')}`
       );
     }
+
+    await assertPermissionStepUp(
+      user.sub,
+      user.refresh_token_id,
+      permissions.filter((permission) => userPermSet.has(permission))
+    );
 
     await next();
   };

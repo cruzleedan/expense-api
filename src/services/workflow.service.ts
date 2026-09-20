@@ -1,4 +1,4 @@
-import { db } from '../db/client.js';
+import { db, query } from '../db/client.js';
 import { logger } from '../utils/logger.js';
 import type {
   WorkflowDefinition,
@@ -6,9 +6,39 @@ import type {
   ExpenseReport,
   ApprovalHistory,
 } from '../types/index.js';
-import { canApproveReport, recordApprovalAction } from './approval.service.js';
+import { canAccessReport, canApproveReport, recordApprovalAction } from './approval.service.js';
 import { logAuditEvent } from './audit.service.js';
-import { ForbiddenError, ValidationError, NotFoundError } from '../types/index.js';
+import { ConflictError, ForbiddenError, ValidationError, NotFoundError } from '../types/index.js';
+import {
+  assertAccountingSeparationOfDuties,
+  assertExpectedVersion,
+  assertReportTransition,
+} from '../policies/reportLifecycle.js';
+import {
+  assertActorEligibleForStep,
+  combineEligiblePrincipals,
+  findNextRequiredStep,
+  shouldSkipWorkflowStep,
+  type FrozenWorkflowStep,
+} from '../policies/workflowExecution.js';
+
+type QueryClient = { query: typeof query };
+
+export async function calculateActiveExpenseLineTotal(
+  reportId: string,
+  client: QueryClient
+): Promise<number> {
+  const result = await client.query<{ line_count: string; total: string }>(
+    `SELECT COUNT(*) AS line_count, COALESCE(SUM(amount), 0) AS total
+     FROM expense_lines
+     WHERE report_id = $1 AND deleted_at IS NULL`,
+    [reportId]
+  );
+  if (parseInt(result.rows[0].line_count, 10) === 0) {
+    throw new ValidationError('Report must have at least one active expense line');
+  }
+  return parseFloat(result.rows[0].total);
+}
 
 /**
  * Workflow Service
@@ -35,8 +65,12 @@ export async function getAllWorkflows(): Promise<WorkflowDefinition[]> {
 /**
  * Get a workflow by ID
  */
-export async function getWorkflowById(workflowId: string): Promise<WorkflowDefinition | null> {
-  const result = await db.query<WorkflowDefinition>(
+export async function getWorkflowById(
+  workflowId: string,
+  client?: QueryClient
+): Promise<WorkflowDefinition | null> {
+  const queryFn: typeof query = client ? client.query.bind(client) : db.query.bind(db);
+  const result = await queryFn<WorkflowDefinition>(
     `SELECT id, name, description, version, is_active, conditions, steps, on_return_policy, created_at, updated_at, created_by
      FROM workflows
      WHERE id = $1`,
@@ -135,12 +169,14 @@ export async function updateWorkflow(
  */
 export async function findWorkflowForReport(
   report: Pick<ExpenseReport, 'department_id' | 'total_amount'>,
-  expenseCategory?: string
+  expenseCategory?: string,
+  client?: QueryClient
 ): Promise<WorkflowDefinition | null> {
   const amount = report.total_amount ?? 0;
+  const queryFn: typeof query = client ? client.query.bind(client) : db.query.bind(db);
 
   // Find matching workflow assignment by priority
-  const assignmentResult = await db.query<{ workflow_id: string }>(
+  const assignmentResult = await queryFn<{ workflow_id: string }>(
     `SELECT wa.workflow_id
      FROM workflow_assignments wa
      JOIN workflows w ON wa.workflow_id = w.id
@@ -156,7 +192,7 @@ export async function findWorkflowForReport(
 
   if (assignmentResult.rows.length === 0) {
     // Fall back to default workflow (one without specific conditions)
-    const defaultResult = await db.query<WorkflowDefinition>(
+    const defaultResult = await queryFn<WorkflowDefinition>(
       `SELECT * FROM workflows
        WHERE is_active = true
          AND (conditions IS NULL OR conditions = '{}' OR conditions->>'amount_min' = '0')
@@ -169,7 +205,155 @@ export async function findWorkflowForReport(
     return null;
   }
 
-  return getWorkflowById(assignmentResult.rows[0].workflow_id);
+  return getWorkflowById(assignmentResult.rows[0].workflow_id, client);
+}
+
+async function resolveRolePrincipals(roleName: string, client: QueryClient): Promise<string[]> {
+  const result = await client.query<{ id: string }>(
+    `SELECT DISTINCT u.id
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE r.name = $1
+       AND r.is_active = true
+       AND u.is_active = true
+       AND u.is_verified = true`,
+    [roleName]
+  );
+  return result.rows.map((row) => row.id);
+}
+
+async function resolveRelationshipPrincipals(
+  relationship: string,
+  submitterId: string,
+  client: QueryClient
+): Promise<string[]> {
+  if (relationship === 'direct_manager' || relationship === 'manager') {
+    const result = await client.query<{ id: string }>(
+      `SELECT manager.id
+       FROM users submitter
+       JOIN users manager ON manager.id = submitter.manager_id
+       WHERE submitter.id = $1
+         AND manager.is_active = true
+         AND manager.is_verified = true`,
+      [submitterId]
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  if (relationship === 'manager_chain') {
+    const result = await client.query<{ id: string }>(
+      `WITH RECURSIVE manager_chain AS (
+         SELECT manager.id, manager.manager_id, 1 AS depth
+         FROM users submitter
+         JOIN users manager ON manager.id = submitter.manager_id
+         WHERE submitter.id = $1
+         UNION ALL
+         SELECT manager.id, manager.manager_id, chain.depth + 1
+         FROM users manager
+         JOIN manager_chain chain ON manager.id = chain.manager_id
+         WHERE chain.depth < 10
+       )
+       SELECT DISTINCT manager.id
+       FROM manager_chain chain
+       JOIN users manager ON manager.id = chain.id
+       WHERE manager.is_active = true AND manager.is_verified = true`,
+      [submitterId]
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  if (relationship === 'department_head') {
+    const result = await client.query<{ id: string }>(
+      `SELECT head.id
+       FROM users submitter
+       JOIN departments department ON department.id = submitter.department_id
+       JOIN users head ON head.id = department.head_user_id
+       WHERE submitter.id = $1
+         AND head.is_active = true
+         AND head.is_verified = true`,
+      [submitterId]
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  throw new ValidationError(`Unsupported workflow relationship target: ${relationship}`);
+}
+
+async function freezeWorkflowStep(
+  step: WorkflowStep,
+  submitterId: string,
+  client: QueryClient
+): Promise<FrozenWorkflowStep> {
+  let rolePrincipals: string[] = [];
+  let relationshipPrincipals: string[] = [];
+
+  if (step.target_type === 'role') {
+    if (typeof step.target_value !== 'string') {
+      throw new ValidationError(`Workflow step ${step.step_number} must specify a role name`);
+    }
+    rolePrincipals = await resolveRolePrincipals(step.target_value, client);
+  } else if (step.target_type === 'relationship') {
+    if (typeof step.target_value !== 'string') {
+      throw new ValidationError(`Workflow step ${step.step_number} must specify a relationship`);
+    }
+    relationshipPrincipals = await resolveRelationshipPrincipals(step.target_value, submitterId, client);
+  } else if (step.target_type === 'hybrid') {
+    if (typeof step.target_value === 'string') {
+      throw new ValidationError(`Workflow step ${step.step_number} must specify role and relationship targets`);
+    }
+    rolePrincipals = await resolveRolePrincipals(step.target_value.role, client);
+    relationshipPrincipals = await resolveRelationshipPrincipals(
+      step.target_value.relationship,
+      submitterId,
+      client
+    );
+  }
+
+  return {
+    ...step,
+    eligible_user_ids: combineEligiblePrincipals(
+      step.target_type,
+      rolePrincipals,
+      relationshipPrincipals
+    ).filter((id) => id !== submitterId),
+  };
+}
+
+function parseWorkflowSnapshot(report: ExpenseReport): WorkflowDefinition {
+  const snapshot = typeof report.workflow_snapshot === 'string'
+    ? JSON.parse(report.workflow_snapshot)
+    : report.workflow_snapshot;
+  if (!snapshot || !Array.isArray(snapshot.steps)) {
+    throw new ValidationError('Report has no valid workflow snapshot; resubmit the report');
+  }
+  return snapshot;
+}
+
+function currentWorkflowStep(report: ExpenseReport, workflow: WorkflowDefinition): WorkflowStep {
+  if (report.current_step === null) {
+    throw new ValidationError('Report has no current workflow step');
+  }
+  const step = workflow.steps.find((candidate) => candidate.step_number === report.current_step);
+  if (!step) {
+    throw new ValidationError('Invalid current workflow step');
+  }
+  return step;
+}
+
+async function authorizeWorkflowActor(
+  report: ExpenseReport,
+  actorId: string,
+  client: QueryClient
+): Promise<{ workflow: WorkflowDefinition; step: WorkflowStep }> {
+  const workflow = parseWorkflowSnapshot(report);
+  const step = currentWorkflowStep(report, workflow);
+  assertActorEligibleForStep(step, actorId);
+  const approval = await canApproveReport(actorId, report.id, client);
+  if (!approval.allowed) {
+    throw new ForbiddenError(approval.reason || 'Cannot act on this report');
+  }
+  return { workflow, step };
 }
 
 // ============================================================================
@@ -181,7 +365,8 @@ export async function findWorkflowForReport(
  */
 export async function submitReport(
   reportId: string,
-  userId: string
+  userId: string,
+  expectedVersion: number
 ): Promise<{ success: boolean; currentStep: number; workflow: WorkflowDefinition }> {
   const client = await db.getClient();
 
@@ -190,7 +375,7 @@ export async function submitReport(
 
     // Get report
     const reportResult = await client.query<ExpenseReport>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -205,36 +390,55 @@ export async function submitReport(
       throw new ForbiddenError('Can only submit your own reports');
     }
 
-    // Verify status
-    if (report.status !== 'draft' && report.status !== 'returned') {
-      throw new ValidationError(`Cannot submit report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('submit', report.status);
 
     // Calculate total amount from expense lines
-    const totalResult = await client.query<{ total: string }>(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM expense_lines WHERE report_id = $1`,
-      [reportId]
-    );
-    const totalAmount = parseFloat(totalResult.rows[0].total);
+    const totalAmount = await calculateActiveExpenseLineTotal(reportId, client);
+    const reportAtSubmission = { ...report, total_amount: totalAmount };
 
     // Find appropriate workflow
     const workflow = await findWorkflowForReport({
       department_id: report.department_id,
       total_amount: totalAmount,
-    });
+    }, undefined, client);
 
     if (!workflow) {
       throw new ValidationError('No workflow configured for this report type');
     }
 
-    // Snapshot the workflow at time of submission
-    const workflowSnapshot = {
-      id: workflow.id,
-      name: workflow.name,
-      version: workflow.version,
-      steps: workflow.steps,
-      on_return_policy: workflow.on_return_policy,
-    };
+    const frozenSteps: FrozenWorkflowStep[] = [];
+    for (const step of workflow.steps) {
+      frozenSteps.push(await freezeWorkflowStep(step, report.user_id, client));
+    }
+
+    const activeSteps = frozenSteps.filter(
+      (step) => !shouldSkipWorkflowStep(step, reportAtSubmission as unknown as Record<string, unknown>)
+    );
+    if (activeSteps.length === 0) {
+      throw new ValidationError('Workflow has no required step for this report');
+    }
+    for (const step of activeSteps) {
+      if (step.target_type === 'system') {
+        throw new ValidationError(
+          `Workflow step ${step.step_number} is a system step, but no system executor is configured`
+        );
+      }
+      if (step.eligible_user_ids.length === 0) {
+        throw new ValidationError(`Workflow step ${step.step_number} has no eligible approver`);
+      }
+    }
+
+    const firstStep = findNextRequiredStep(
+      frozenSteps,
+      reportAtSubmission as unknown as Record<string, unknown>
+    );
+    if (!firstStep) {
+      throw new ValidationError('Workflow has no executable step for this report');
+    }
+
+    // Freeze the workflow definition and point-in-time eligible principals.
+    const workflowSnapshot: WorkflowDefinition = { ...workflow, steps: frozenSteps };
 
     // Update report
     await client.query(
@@ -242,17 +446,25 @@ export async function submitReport(
        SET status = 'submitted',
            workflow_id = $2,
            workflow_snapshot = $3,
-           current_step = 1,
-           total_amount = $4,
+           current_step = $4,
+           total_amount = $5,
+           net_amount = $5,
+           base_currency_total = $5 * COALESCE(exchange_rate, 1),
            submitted_at = NOW(),
-           version = version + 1
-       WHERE id = $1`,
-      [reportId, workflow.id, JSON.stringify(workflowSnapshot), totalAmount]
+           approved_at = NULL,
+           posted_at = NULL,
+           posted_by = NULL,
+           posting_reference = NULL,
+           paid_at = NULL,
+           paid_by = NULL,
+           payment_reference = NULL,
+           rejection_reason = NULL,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $6`,
+      [reportId, workflow.id, JSON.stringify(workflowSnapshot), firstStep.step_number, totalAmount, expectedVersion]
     );
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: userId,
       action: 'report.submit',
@@ -264,7 +476,11 @@ export async function submitReport(
         workflow_name: workflow.name,
         total_amount: totalAmount,
       },
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Report submitted for approval', {
       reportId,
@@ -273,7 +489,7 @@ export async function submitReport(
       totalAmount,
     });
 
-    return { success: true, currentStep: 1, workflow };
+    return { success: true, currentStep: firstStep.step_number, workflow: workflowSnapshot };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -289,14 +505,9 @@ export async function approveReport(
   reportId: string,
   approverId: string,
   approverEmail: string,
+  expectedVersion: number,
   comment?: string
 ): Promise<{ success: boolean; isFullyApproved: boolean; nextStep?: number }> {
-  // Check self-approval rules
-  const canApprove = await canApproveReport(approverId, reportId);
-  if (!canApprove.allowed) {
-    throw new ForbiddenError(canApprove.reason || 'Cannot approve this report');
-  }
-
   const client = await db.getClient();
 
   try {
@@ -304,7 +515,7 @@ export async function approveReport(
 
     // Get report with lock
     const reportResult = await client.query<ExpenseReport & { workflow_snapshot: string }>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -314,29 +525,11 @@ export async function approveReport(
 
     const report = reportResult.rows[0];
 
-    if (report.status !== 'submitted' && report.status !== 'pending') {
-      throw new ValidationError(`Cannot approve report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('approve', report.status);
 
-    // Check if workflow snapshot exists
-    if (!report.workflow_snapshot) {
-      throw new ValidationError('Report has no workflow assigned. Please resubmit the report.');
-    }
-
-    const workflow = typeof report.workflow_snapshot === 'string'
-      ? JSON.parse(report.workflow_snapshot)
-      : report.workflow_snapshot;
-
-    if (!workflow || !workflow.steps) {
-      throw new ValidationError('Invalid workflow configuration. Please resubmit the report.');
-    }
-
-    const currentStep = report.current_step || 1;
-    const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
-
-    if (!stepConfig) {
-      throw new ValidationError('Invalid workflow step');
-    }
+    const { workflow, step: stepConfig } = await authorizeWorkflowActor(report, approverId, client);
+    const currentStep = stepConfig.step_number;
 
     // Record approval action
     await recordApprovalAction(
@@ -353,9 +546,12 @@ export async function approveReport(
       client // transaction client
     );
 
-    // Determine if there's a next step
-    const nextStep = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep + 1);
-    const isFullyApproved = !nextStep || shouldSkipStep(nextStep, report);
+    const nextStep = findNextRequiredStep(
+      workflow.steps,
+      report as unknown as Record<string, unknown>,
+      currentStep
+    );
+    const isFullyApproved = !nextStep;
 
     if (isFullyApproved) {
       // All steps complete - mark as approved
@@ -363,9 +559,10 @@ export async function approveReport(
         `UPDATE expense_reports
          SET status = 'approved',
              approved_at = NOW(),
-             version = version + 1
-         WHERE id = $1`,
-        [reportId]
+             version = version + 1,
+             updated_at = NOW()
+         WHERE id = $1 AND version = $2`,
+        [reportId, expectedVersion]
       );
     } else {
       // Move to next step
@@ -373,15 +570,13 @@ export async function approveReport(
         `UPDATE expense_reports
          SET status = 'pending',
              current_step = $2,
-             version = version + 1
-         WHERE id = $1`,
-        [reportId, currentStep + 1]
+             version = version + 1,
+             updated_at = NOW()
+         WHERE id = $1 AND version = $3`,
+        [reportId, nextStep.step_number, expectedVersion]
       );
     }
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: approverId,
       action: 'report.approve',
@@ -394,7 +589,11 @@ export async function approveReport(
         is_fully_approved: isFullyApproved,
         comment,
       },
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Report approved', {
       reportId,
@@ -406,7 +605,7 @@ export async function approveReport(
     return {
       success: true,
       isFullyApproved,
-      nextStep: isFullyApproved ? undefined : currentStep + 1,
+      nextStep: nextStep?.step_number,
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -423,15 +622,10 @@ export async function rejectReport(
   reportId: string,
   approverId: string,
   approverEmail: string,
+  expectedVersion: number,
   comment: string,
   rejectionCategory?: string
 ): Promise<{ success: boolean }> {
-  // Check self-approval rules (same rules apply for rejection)
-  const canApprove = await canApproveReport(approverId, reportId);
-  if (!canApprove.allowed) {
-    throw new ForbiddenError(canApprove.reason || 'Cannot reject this report');
-  }
-
   const client = await db.getClient();
 
   try {
@@ -439,7 +633,7 @@ export async function rejectReport(
 
     // Get report with lock
     const reportResult = await client.query<ExpenseReport & { workflow_snapshot: string }>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -449,31 +643,17 @@ export async function rejectReport(
 
     const report = reportResult.rows[0];
 
-    if (report.status !== 'submitted' && report.status !== 'pending') {
-      throw new ValidationError(`Cannot reject report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('reject', report.status);
 
-    // Check if workflow snapshot exists
-    if (!report.workflow_snapshot) {
-      throw new ValidationError('Report has no workflow assigned. Please contact administrator.');
-    }
-
-    const workflow = typeof report.workflow_snapshot === 'string'
-      ? JSON.parse(report.workflow_snapshot)
-      : report.workflow_snapshot;
-
-    if (!workflow || !workflow.steps) {
-      throw new ValidationError('Invalid workflow configuration. Please contact administrator.');
-    }
-
-    const currentStep = report.current_step || 1;
-    const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
+    const { step: stepConfig } = await authorizeWorkflowActor(report, approverId, client);
+    const currentStep = stepConfig.step_number;
 
     // Record rejection action
     await recordApprovalAction(
       reportId,
       currentStep,
-      stepConfig?.name || `Step ${currentStep}`,
+      stepConfig.name,
       approverId,
       approverEmail,
       'reject',
@@ -488,14 +668,13 @@ export async function rejectReport(
     await client.query(
       `UPDATE expense_reports
        SET status = 'rejected',
-           version = version + 1
-       WHERE id = $1`,
-      [reportId]
+           rejection_reason = $2,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $3`,
+      [reportId, comment, expectedVersion]
     );
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: approverId,
       action: 'report.reject',
@@ -507,7 +686,11 @@ export async function rejectReport(
         comment,
         rejection_category: rejectionCategory,
       },
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Report rejected', { reportId, approverId, step: currentStep });
 
@@ -527,6 +710,7 @@ export async function returnReport(
   reportId: string,
   approverId: string,
   approverEmail: string,
+  expectedVersion: number,
   comment: string
 ): Promise<{ success: boolean }> {
   const client = await db.getClient();
@@ -536,7 +720,7 @@ export async function returnReport(
 
     // Get report with lock
     const reportResult = await client.query<ExpenseReport & { workflow_snapshot: string }>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -546,31 +730,17 @@ export async function returnReport(
 
     const report = reportResult.rows[0];
 
-    if (report.status !== 'submitted' && report.status !== 'pending') {
-      throw new ValidationError(`Cannot return report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('return', report.status);
 
-    // Check if workflow snapshot exists
-    if (!report.workflow_snapshot) {
-      throw new ValidationError('Report has no workflow assigned. Please contact administrator.');
-    }
-
-    const workflow = typeof report.workflow_snapshot === 'string'
-      ? JSON.parse(report.workflow_snapshot)
-      : report.workflow_snapshot;
-
-    if (!workflow || !workflow.steps) {
-      throw new ValidationError('Invalid workflow configuration. Please contact administrator.');
-    }
-
-    const currentStep = report.current_step || 1;
-    const stepConfig = workflow.steps.find((s: WorkflowStep) => s.step_number === currentStep);
+    const { workflow, step: stepConfig } = await authorizeWorkflowActor(report, approverId, client);
+    const currentStep = stepConfig.step_number;
 
     // Record return action
     await recordApprovalAction(
       reportId,
       currentStep,
-      stepConfig?.name || `Step ${currentStep}`,
+      stepConfig.name,
       approverId,
       approverEmail,
       'return',
@@ -591,9 +761,11 @@ export async function returnReport(
          SET status = 'returned',
              current_step = NULL,
              workflow_snapshot = NULL,
-             version = version + 1
-         WHERE id = $1`,
-        [reportId]
+             rejection_reason = $2,
+             version = version + 1,
+             updated_at = NOW()
+         WHERE id = $1 AND version = $3`,
+        [reportId, comment, expectedVersion]
       );
     } else {
       // Soft restart - keep workflow, restart at step 1
@@ -601,15 +773,14 @@ export async function returnReport(
         `UPDATE expense_reports
          SET status = 'returned',
              current_step = 1,
-             version = version + 1
-         WHERE id = $1`,
-        [reportId]
+             rejection_reason = $2,
+             version = version + 1,
+             updated_at = NOW()
+         WHERE id = $1 AND version = $3`,
+        [reportId, comment, expectedVersion]
       );
     }
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: approverId,
       action: 'report.return',
@@ -621,7 +792,11 @@ export async function returnReport(
         comment,
         return_policy: onReturnPolicy,
       },
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Report returned for corrections', { reportId, approverId, step: currentStep });
 
@@ -639,7 +814,8 @@ export async function returnReport(
  */
 export async function withdrawReport(
   reportId: string,
-  userId: string
+  userId: string,
+  expectedVersion: number
 ): Promise<{ success: boolean }> {
   const client = await db.getClient();
 
@@ -648,7 +824,7 @@ export async function withdrawReport(
 
     // Get report with lock
     const reportResult = await client.query<ExpenseReport>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -663,10 +839,8 @@ export async function withdrawReport(
       throw new ForbiddenError('Can only withdraw your own reports');
     }
 
-    // Can only withdraw submitted/pending reports
-    if (report.status !== 'submitted' && report.status !== 'pending') {
-      throw new ValidationError(`Cannot withdraw report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('withdraw', report.status);
 
     // Withdraw the report
     await client.query(
@@ -676,21 +850,31 @@ export async function withdrawReport(
            workflow_id = NULL,
            workflow_snapshot = NULL,
            submitted_at = NULL,
-           version = version + 1
-       WHERE id = $1`,
-      [reportId]
+           approved_at = NULL,
+           posted_at = NULL,
+           posted_by = NULL,
+           posting_reference = NULL,
+           paid_at = NULL,
+           paid_by = NULL,
+           payment_reference = NULL,
+           rejection_reason = NULL,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $2`,
+      [reportId, expectedVersion]
     );
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: userId,
       action: 'report.withdraw',
       actionCategory: 'workflow',
       resourceType: 'expense_report',
       resourceId: reportId,
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Report withdrawn', { reportId, userId });
 
@@ -710,7 +894,8 @@ export async function withdrawReport(
 export async function reviseReport(
   reportId: string,
   userId: string,
-  userEmail: string
+  userEmail: string,
+  expectedVersion: number
 ): Promise<{ success: boolean }> {
   const client = await db.getClient();
 
@@ -719,7 +904,7 @@ export async function reviseReport(
 
     // Get report with lock
     const reportResult = await client.query<ExpenseReport>(
-      `SELECT * FROM expense_reports WHERE id = $1 FOR UPDATE`,
+      `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [reportId]
     );
 
@@ -734,10 +919,8 @@ export async function reviseReport(
       throw new ForbiddenError('Can only revise your own reports');
     }
 
-    // Can only revise rejected reports
-    if (report.status !== 'rejected') {
-      throw new ValidationError(`Cannot revise report in ${report.status} status`);
-    }
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('revise', report.status);
 
     // Record the revise action in approval history
     const currentStep = report.current_step || 0;
@@ -763,21 +946,31 @@ export async function reviseReport(
            workflow_id = NULL,
            workflow_snapshot = NULL,
            submitted_at = NULL,
-           version = version + 1
-       WHERE id = $1`,
-      [reportId]
+           approved_at = NULL,
+           posted_at = NULL,
+           posted_by = NULL,
+           posting_reference = NULL,
+           paid_at = NULL,
+           paid_by = NULL,
+           payment_reference = NULL,
+           rejection_reason = NULL,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $2`,
+      [reportId, expectedVersion]
     );
 
-    await client.query('COMMIT');
-
-    // Log audit event
     await logAuditEvent({
       actorId: userId,
       action: 'report.revise',
       actionCategory: 'workflow',
       resourceType: 'expense_report',
       resourceId: reportId,
+      resourceVersion: expectedVersion + 1,
+      client,
     });
+
+    await client.query('COMMIT');
 
     logger.info('Rejected report reopened for revision', { reportId, userId });
 
@@ -790,50 +983,223 @@ export async function reviseReport(
   }
 }
 
-/**
- * Check if a workflow step should be skipped based on conditions
- */
-function shouldSkipStep(step: WorkflowStep, report: ExpenseReport): boolean {
-  if (step.skip_if) {
-    return evaluateCondition(step.skip_if, report);
+/** Reopen an approved, unposted report through an explicit correction trail. */
+export async function correctApprovedReport(
+  reportId: string,
+  actorId: string,
+  actorEmail: string,
+  expectedVersion: number,
+  reason: string
+): Promise<{ success: boolean }> {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query<ExpenseReport>(
+      `SELECT * FROM expense_reports
+       WHERE id = $1 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [reportId]
+    );
+    if (result.rows.length === 0) throw new NotFoundError('Expense report');
+    const report = result.rows[0];
+
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('correct', report.status);
+    if (report.user_id === actorId) {
+      throw new ForbiddenError('The report submitter cannot reopen their own approved report');
+    }
+
+    await recordApprovalAction(
+      reportId,
+      report.current_step ?? 0,
+      'Approved report correction',
+      actorId,
+      actorEmail,
+      'return',
+      reason,
+      'approved_report_correction',
+      undefined,
+      undefined,
+      client
+    );
+
+    await client.query(
+      `UPDATE expense_reports
+       SET status = 'returned',
+           current_step = NULL,
+           workflow_id = NULL,
+           workflow_snapshot = NULL,
+           approved_at = NULL,
+           rejection_reason = $2,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $3`,
+      [reportId, reason, expectedVersion]
+    );
+
+    await logAuditEvent({
+      actorId,
+      actorEmail,
+      action: 'report.correct',
+      actionCategory: 'workflow',
+      resourceType: 'expense_report',
+      resourceId: reportId,
+      resourceVersion: expectedVersion + 1,
+      changes: { status: { from: report.status, to: 'returned' } },
+      metadata: { reason },
+      client,
+    });
+    await client.query('COMMIT');
+    logger.info('Approved report reopened for correction', { reportId, actorId });
+    return { success: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
-  if (step.required_if) {
-    return !evaluateCondition(step.required_if, report);
-  }
-  return false;
 }
 
-/**
- * Evaluate a workflow condition
- */
-function evaluateCondition(
-  condition: { field: string; condition: string; value: unknown },
-  report: ExpenseReport
-): boolean {
-  const fieldValue = (report as unknown as Record<string, unknown>)[condition.field];
+/** Post an approved report to the accounting ledger. */
+export async function postReport(
+  reportId: string,
+  actorId: string,
+  expectedVersion: number,
+  postingReference: string
+): Promise<{ success: boolean }> {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query<ExpenseReport>(
+      `SELECT * FROM expense_reports
+       WHERE id = $1 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [reportId]
+    );
+    if (result.rows.length === 0) throw new NotFoundError('Expense report');
+    const report = result.rows[0];
 
-  switch (condition.condition) {
-    case 'greater_than':
-      return Number(fieldValue) > Number(condition.value);
-    case 'less_than':
-      return Number(fieldValue) < Number(condition.value);
-    case 'equals':
-      return fieldValue === condition.value;
-    case 'not_equals':
-      return fieldValue !== condition.value;
-    case 'in':
-      return Array.isArray(condition.value) && condition.value.includes(fieldValue);
-    case 'not_in':
-      return Array.isArray(condition.value) && !condition.value.includes(fieldValue);
-    default:
-      return false;
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('post', report.status);
+    assertAccountingSeparationOfDuties({
+      actorId,
+      submitterId: report.user_id,
+      action: 'post',
+    });
+
+    await client.query(
+      `UPDATE expense_reports
+       SET status = 'posted',
+           posted_at = NOW(),
+           posted_by = $2,
+           posting_reference = $3,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $4`,
+      [reportId, actorId, postingReference, expectedVersion]
+    );
+
+    await logAuditEvent({
+      actorId,
+      action: 'report.post',
+      actionCategory: 'workflow',
+      resourceType: 'expense_report',
+      resourceId: reportId,
+      resourceVersion: expectedVersion + 1,
+      changes: { status: { from: report.status, to: 'posted' } },
+      metadata: { posting_reference: postingReference },
+      client,
+    });
+    await client.query('COMMIT');
+    logger.info('Report posted', { reportId, actorId, postingReference });
+    return { success: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if ((error as { code?: string }).code === '23505') {
+      throw new ConflictError('Posting reference has already been used');
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Record settlement of a posted report. Posting and payment require different actors. */
+export async function payReport(
+  reportId: string,
+  actorId: string,
+  expectedVersion: number,
+  paymentReference: string
+): Promise<{ success: boolean }> {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query<ExpenseReport>(
+      `SELECT * FROM expense_reports
+       WHERE id = $1 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [reportId]
+    );
+    if (result.rows.length === 0) throw new NotFoundError('Expense report');
+    const report = result.rows[0];
+
+    assertExpectedVersion(report.version, expectedVersion);
+    assertReportTransition('pay', report.status);
+    assertAccountingSeparationOfDuties({
+      actorId,
+      submitterId: report.user_id,
+      postedBy: report.posted_by,
+      action: 'pay',
+    });
+
+    await client.query(
+      `UPDATE expense_reports
+       SET status = 'paid',
+           paid_at = NOW(),
+           paid_by = $2,
+           payment_reference = $3,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $1 AND version = $4`,
+      [reportId, actorId, paymentReference, expectedVersion]
+    );
+
+    await logAuditEvent({
+      actorId,
+      action: 'report.pay',
+      actionCategory: 'workflow',
+      resourceType: 'expense_report',
+      resourceId: reportId,
+      resourceVersion: expectedVersion + 1,
+      changes: { status: { from: report.status, to: 'paid' } },
+      metadata: {
+        posting_reference: report.posting_reference,
+        payment_reference: paymentReference,
+      },
+      client,
+    });
+    await client.query('COMMIT');
+    logger.info('Report payment recorded', { reportId, actorId, paymentReference });
+    return { success: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if ((error as { code?: string }).code === '23505') {
+      throw new ConflictError('Payment reference has already been used');
+    }
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 /**
  * Get current workflow status for a report
  */
-export async function getReportWorkflowStatus(reportId: string): Promise<{
+export async function getReportWorkflowStatus(
+  reportId: string,
+  userId: string,
+  permissions: string[]
+): Promise<{
   status: string;
   currentStep: number | null;
   totalSteps: number;
@@ -841,7 +1207,7 @@ export async function getReportWorkflowStatus(reportId: string): Promise<{
   history: ApprovalHistory[];
 } | null> {
   const reportResult = await db.query<ExpenseReport & { workflow_snapshot: string }>(
-    `SELECT * FROM expense_reports WHERE id = $1`,
+    `SELECT * FROM expense_reports WHERE id = $1 AND deleted_at IS NULL`,
     [reportId]
   );
 
@@ -850,6 +1216,10 @@ export async function getReportWorkflowStatus(reportId: string): Promise<{
   }
 
   const report = reportResult.rows[0];
+  const access = await canAccessReport(userId, reportId, permissions);
+  if (!access.allowed) {
+    throw new ForbiddenError(access.reason || 'Insufficient permissions to access this report');
+  }
 
   let workflow: WorkflowDefinition | null = null;
   let totalSteps = 0;

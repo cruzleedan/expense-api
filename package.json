@@ -6,9 +6,23 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --inspect=0.0.0.0:9229 src/index.ts",
-    "build": "tsc || true",
+    "build": "tsc",
+    "test": "npm run build && NODE_ENV=test DATABASE_URL=postgresql://test:test@localhost:5432/expense_test JWT_SECRET=test-only-secret-that-is-at-least-32-characters node --test dist/**/*.test.js",
+    "test:postgres": "npm run build && NODE_ENV=test node scripts/test-postgres.mjs",
+    "test:tooling": "node --test scripts/*.test.mjs",
+    "lint": "npm run verify:conventions",
+    "verify:security": "npm audit --omit=dev --audit-level=high",
+    "verify:openapi": "node scripts/verify-openapi.mjs",
+    "verify:conventions": "node scripts/verify-conventions.mjs",
+    "verify:context": "node scripts/verify-context.mjs",
+    "verify:schema": "node scripts/verify-schema-sync.mjs",
+    "verify:scripts": "bash scripts/verify-tooling.sh",
+    "verify:deployment": "bash scripts/verify-deployment.sh",
+    "check": "npm run lint && npm run verify:context && npm run verify:schema && npm run verify:scripts && npm test && npm run test:tooling && npm run verify:openapi",
     "start": "node dist/index.js",
-    "db:init": "psql $DATABASE_URL -f src/db/schema.sql -f src/db/seed-users.sql"
+    "db:init": "bash scripts/apply-db-change.sh --bootstrap src/db/schema.sql && bash scripts/apply-db-change.sh src/db/seed-users.sql",
+    "db:apply-change": "bash scripts/apply-db-change.sh",
+    "db:migrate-admin-catalog": "node dist/db/migrateAdminRoleCatalog.js"
   },
   "keywords": [
     "expense",
@@ -19,26 +33,24 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.712.0",
-    "@aws-sdk/s3-request-presigner": "^3.712.0",
-    "@hono/node-server": "^1.13.7",
+    "@aws-sdk/client-s3": "^3.1132.0",
+    "@aws-sdk/s3-request-presigner": "^3.1132.0",
+    "@hono/node-server": "^1.19.17",
     "@hono/swagger-ui": "^0.4.1",
     "@hono/zod-openapi": "^0.18.3",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.6.14",
+    "hono": "^4.13.7",
     "jose": "^5.9.6",
     "node-cron": "^4.2.1",
     "pg": "^8.13.1",
-    "sharp": "^0.33.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^13.0.0",
     "@types/node": "^22.10.5",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.11.10",
-    "@types/sharp": "^0.32.0",
-    "drizzle-kit": "^0.31.10",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.2"
   },
   "engines": {

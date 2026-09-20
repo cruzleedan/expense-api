@@ -4,6 +4,13 @@ Backend REST API for expense management.
 **Stack:** TypeScript · Hono (OpenAPIHono) · PostgreSQL · JWT auth · Zod validation  
 **Data access:** Mixed — Drizzle ORM (`src/db/drizzle.ts`) for expense report/line/category/policy services; raw SQL (`pg`) for auth, users, analytics, and supporting services — see `context/work/0002`
 
+## Before implementing a work item
+
+Read `context/reference/implementation-playbook.md` completely, then invoke the
+`context/skills/implement-work-item.md` procedure. This is mandatory for work
+that implements, finishes, or deploys a `context/work/` item; it prevents
+unapproved proposal drift and defines the required verification evidence.
+
 ## Directory Structure
 
 ```
@@ -309,14 +316,16 @@ Don't add global middleware inside route files. Route-level middleware (`authMid
 ```bash
 npm run dev              # Start with hot reload (tsx watch)
 npm run build            # Compile TypeScript
+npm run check            # Conventions + context + schema parity + complete tests
 npm start                # Run compiled (production)
+npm run verify:deployment # Health, registration, and body-limit smoke checks
 
 # Docker (from project root)
 docker compose -f compose.dev.yaml up -d
 docker compose logs -f expense-api
 
-# Database
-psql $DATABASE_URL -f src/db/schema.sql   # Apply schema
+# Database (reviewed additive SQL only; schema.sql is bootstrap-only)
+npm run db:apply-change -- path/to/change.sql
 ```
 
 ---
@@ -334,6 +343,10 @@ psql $DATABASE_URL -f src/db/schema.sql   # Apply schema
 - [ ] `getUserId(c)` helper used (not `c.get('userId')`)
 - [ ] Admin endpoints have permission middleware
 - [ ] Zod schemas call `.openapi('Name')`
+- [ ] Zod schemas import `z` from `@hono/zod-openapi`
+- [ ] State-changing commands lock, check expected version, and commit related writes atomically
+- [ ] Relevant work-item status/log and external release gates are current
+- [ ] `npm run check` passes
 - [ ] No `any` types
 
 ---
@@ -344,6 +357,7 @@ psql $DATABASE_URL -f src/db/schema.sql   # Apply schema
 |---|---|---|
 | Add an endpoint | `context/skills/add-endpoint.md` | Full flow: schema → route → service → register in app |
 | Add a migration | `context/skills/add-migration.md` | Update `schema.sql` + `schema.ts`, apply, verify |
+| Implement a work item | `context/skills/implement-work-item.md` | Approved scope → implementation → verification → authorized deployment |
 
 ---
 
@@ -359,10 +373,18 @@ psql $DATABASE_URL -f src/db/schema.sql   # Apply schema
 
 Architectural decisions and proposals live in `context/work/` (see
 `context/work/0002-dual-data-access-sql-and-drizzle.md` for the Drizzle/SQL
-split, `context/work/0003-jwt-bearer-plus-httponly-cookie.md` for auth,
+split, `context/work/0030-harden-authentication-oauth-and-session-lifecycle.md`
+for auth (supersedes WORK-0003's stateless-session claim),
 `context/work/0007-bulk-expense-line-creation.md` for the ICR bulk-create
 endpoint). Release conventions are in `context/RELEASING.md`. Log framework
 friction (not code bugs) in `context/friction.md`.
+
+Early opportunities live in `context/ideas/` and are never implementation
+authority; dated evidence and finding indexes live in `context/reviews/`.
+
+The maintained implementation procedure and durable friction notes are in
+`context/reference/implementation-playbook.md`. Item-specific verification,
+deployment state, and external gates stay in each work item's append-only log.
 
 `enhancement_plan/` (a v3.0 spec proposing Passport/Redis/RabbitMQ) has been
 consolidated and removed — its rejection is recorded in

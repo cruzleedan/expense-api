@@ -38,9 +38,14 @@ separate DoD to maintain; if the checklist is wrong, fix it on the work item.
 ## Before marking a context/work/ item "shipped"
 
 - [ ] All Definition of done boxes checked
+- [ ] `npm run check` passes
 - [ ] Deployed, per the project's `AGENTS.md` deploy command
-- [ ] `scripts/verify-context.sh` passes
+- [ ] Database changes were applied and verified, when applicable
+- [ ] `npm run verify:deployment` passes for an authorized d3 deployment
+- [ ] `npm run verify:context` passes
 - [ ] Log entry added: `- YYYY-MM-DD shipped — <one line>`
+- [ ] External incident, credential, dependency, or coordination gates are
+      recorded separately from implementation completion
 
 ## After shipping
 

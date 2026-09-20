@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, getUser } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import {
   getAllRoles,
@@ -9,17 +9,19 @@ import {
   getAllPermissions,
   getPermissionsByCategory,
   getUserRoles,
-  createRole,
-  updateRolePermissions,
-  deleteRole,
-  setUserRoles,
-  assignRoleToUser,
-  removeRoleFromUser,
-  validateRoleAssignmentSod,
   validateUserSod,
 } from '../services/permission.service.js';
-import { getUserId } from '../middleware/auth.js';
-import { ForbiddenError, NotFoundError, ValidationError } from '../types/index.js';
+import {
+  assignRoleToUser,
+  createRole,
+  deleteRole,
+  removeRoleFromUser,
+  setUserRoles,
+  updateRolePermissions,
+  type RbacMutationActor,
+} from '../services/rbac.service.js';
+import { NotFoundError } from '../types/index.js';
+import type { JwtPayloadV3 } from '../types/index.js';
 import {
   RoleSchema,
   RoleWithPermissionsSchema,
@@ -37,6 +39,11 @@ import {
 import { ErrorSchema, MessageSchema } from '../schemas/common.js';
 
 const rolesRouter = new OpenAPIHono();
+
+function getRbacActor(c: Parameters<typeof getUser>[0]): RbacMutationActor {
+  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  return { id: jwt.sub, rolesVersion: jwt.roles_version, sessionId: jwt.refresh_token_id };
+}
 
 // All routes require authentication
 rolesRouter.use('*', authMiddleware);
@@ -227,21 +234,12 @@ const createRoleRoute = createRoute({
 
 const createRoleHandler: RouteHandler<typeof createRoleRoute> = async (c) => {
   const { name, description, permissionIds } = c.req.valid('json');
-  const userId = getUserId(c);
-
-  try {
-    const role = await createRole(name, description || null, permissionIds, userId);
-    return c.json({
-      ...role,
-      created_at: role.created_at.toISOString(),
-      updated_at: role.updated_at.toISOString(),
-    } as any, 201);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('duplicate key')) {
-      throw new ValidationError('Role name already exists');
-    }
-    throw error;
-  }
+  const role = await createRole(name, description || null, permissionIds, getRbacActor(c));
+  return c.json({
+    ...role,
+    created_at: role.created_at.toISOString(),
+    updated_at: role.updated_at.toISOString(),
+  } as any, 201);
 };
 rolesRouter.openapi(createRoleRoute, createRoleHandler);
 
@@ -267,7 +265,7 @@ const updateRoleRoute = createRoute({
     },
     400: {
       description: 'SoD violation',
-      content: { 'application/json': { schema: SodValidationResultSchema } },
+      content: { 'application/json': { schema: ErrorSchema } },
     },
     403: {
       description: 'Cannot modify system role',
@@ -283,18 +281,7 @@ const updateRoleRoute = createRoute({
 const updateRoleHandler: RouteHandler<typeof updateRoleRoute> = async (c) => {
   const { roleId } = c.req.valid('param');
   const { permissionIds } = c.req.valid('json');
-  const userId = getUserId(c);
-
-  const role = await getRoleById(roleId);
-  if (!role) {
-    throw new NotFoundError('Role');
-  }
-
-  if (role.is_system) {
-    throw new ForbiddenError('Cannot modify system roles');
-  }
-
-  await updateRolePermissions(roleId, permissionIds, userId);
+  await updateRolePermissions(roleId, permissionIds, getRbacActor(c));
 
   return c.json({ message: 'Role updated successfully' }, 200);
 };
@@ -330,20 +317,7 @@ const deleteRoleRoute = createRoute({
 
 const deleteRoleHandler: RouteHandler<typeof deleteRoleRoute> = async (c) => {
   const { roleId } = c.req.valid('param');
-
-  const role = await getRoleById(roleId);
-  if (!role) {
-    throw new NotFoundError('Role');
-  }
-
-  if (role.is_system) {
-    throw new ForbiddenError('Cannot delete system roles');
-  }
-
-  const deleted = await deleteRole(roleId);
-  if (!deleted) {
-    throw new ForbiddenError('Cannot delete system roles');
-  }
+  await deleteRole(roleId, getRbacActor(c));
 
   return c.json({ message: 'Role deleted successfully' }, 200);
 };
@@ -414,7 +388,7 @@ const setUserRolesRoute = createRoute({
     },
     400: {
       description: 'SoD violation',
-      content: { 'application/json': { schema: SodValidationResultSchema } },
+      content: { 'application/json': { schema: ErrorSchema } },
     },
     403: {
       description: 'Cannot assign admin/finance roles without special permission',
@@ -426,28 +400,7 @@ const setUserRolesRoute = createRoute({
 const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
-  const adminId = getUserId(c);
-
-  // Check for admin/finance role assignment permissions
-  const targetRoles = await Promise.all(roleIds.map((id: string) => getRoleById(id)));
-  const adminRole = targetRoles.find((r) => r?.name === 'admin' || r?.name === 'super_admin');
-  const financeRole = targetRoles.find((r) => r?.name === 'finance');
-
-  const authUser = c.get('authUser');
-  if (adminRole && !authUser?.permissions.includes('role.assign.admin')) {
-    throw new ForbiddenError('role.assign.admin permission required to assign admin roles');
-  }
-  if (financeRole && !authUser?.permissions.includes('role.assign.finance')) {
-    throw new ForbiddenError('role.assign.finance permission required to assign finance role');
-  }
-
-  // Validate SoD before assignment
-  const sodResult = await validateRoleAssignmentSod(userId, roleIds);
-  if (!sodResult.valid) {
-    return c.json(sodResult as any, 400);
-  }
-
-  await setUserRoles(userId, roleIds, adminId);
+  await setUserRoles(userId, roleIds, getRbacActor(c));
 
   return c.json({ message: 'User roles updated successfully' }, 200);
 };
@@ -475,7 +428,7 @@ const addUserRoleRoute = createRoute({
     },
     400: {
       description: 'SoD violation',
-      content: { 'application/json': { schema: SodValidationResultSchema } },
+      content: { 'application/json': { schema: ErrorSchema } },
     },
   },
 });
@@ -483,29 +436,7 @@ const addUserRoleRoute = createRoute({
 const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
   const { userId } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
-  const adminId = getUserId(c);
-
-  // Check permissions for special roles
-  const role = await getRoleById(roleId);
-  if (!role) {
-    throw new NotFoundError('Role');
-  }
-
-  const authUser = c.get('authUser');
-  if ((role.name === 'admin' || role.name === 'super_admin') && !authUser?.permissions.includes('role.assign.admin')) {
-    throw new ForbiddenError('role.assign.admin permission required');
-  }
-  if (role.name === 'finance' && !authUser?.permissions.includes('role.assign.finance')) {
-    throw new ForbiddenError('role.assign.finance permission required');
-  }
-
-  // Validate SoD
-  const sodResult = await validateRoleAssignmentSod(userId, [roleId]);
-  if (!sodResult.valid) {
-    return c.json(sodResult as any, 400);
-  }
-
-  await assignRoleToUser(userId, roleId, adminId);
+  await assignRoleToUser(userId, roleId, getRbacActor(c));
 
   return c.json({ message: 'Role added successfully' }, 200);
 };
@@ -533,8 +464,7 @@ const removeUserRoleRoute = createRoute({
 
 const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { userId, roleId } = c.req.valid('param');
-
-  await removeRoleFromUser(userId, roleId);
+  await removeRoleFromUser(userId, roleId, getRbacActor(c));
 
   return c.json({ message: 'Role removed successfully' }, 200);
 };

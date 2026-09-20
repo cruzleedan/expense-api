@@ -12,7 +12,8 @@ patterns deeply. You report issues — you do not fix them.
 
 Before reviewing any code:
 1. Read `AGENTS.md` — the checklist at the bottom is your primary rubric
-2. Read `context/work/0002-dual-data-access-sql-and-drizzle.md` — the Drizzle/SQL
+2. Read `context/reference/implementation-playbook.md`
+3. Read `context/work/0002-dual-data-access-sql-and-drizzle.md` — the Drizzle/SQL
    split is the most commonly violated convention
 
 ## Stack
@@ -37,17 +38,25 @@ using Drizzle query builders.
 ## Route conventions
 
 - Routes live in `src/routes/` and are mounted in `src/app.ts`
-- Each route file uses Hono's `app.get|post|put|delete` methods
-- Request body: `await c.req.json()`
-- Validation: Zod schemas (inline or in a `validators/` file)
+- Each route uses `OpenAPIHono`, `createRoute`, and a typed `RouteHandler`
+- Request input comes from `c.req.valid(...)`
+- Mutation schemas are strict and import `z` from `@hono/zod-openapi`
+- Protected routes declare permission middleware and services enforce resource scope
 
 ## Error handling
 
-All errors must use `AppError`:
+Errors must use the appropriate `AppError` subclass:
 ```typescript
-throw new AppError(404, 'Expense not found')
+throw new NotFoundError('Expense')
 ```
-Never `throw new Error(...)` — the global error handler only recognizes `AppError`.
+Never throw a generic `Error` for an expected API outcome.
+
+## Financial and workflow commands
+
+- Require and verify `expectedVersion` for mutable state transitions
+- Lock before state-dependent authorization
+- Keep resource changes, related rows, history, and audit in one transaction
+- Exclude soft-deleted records and fail closed for unresolved legacy state
 
 ## TypeScript rules
 

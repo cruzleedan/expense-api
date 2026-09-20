@@ -111,6 +111,7 @@ npm run dev
 | `JWT_SECRET` | JWT signing secret (min 32 chars) | required |
 | `JWT_ACCESS_EXPIRES_IN` | Access token expiry | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token expiry | `7d` |
+| `STEP_UP_TTL_SECONDS` | Lifetime of session-bound credential step-up assurance | `300` |
 
 ### OAuth
 
@@ -119,6 +120,7 @@ npm run dev
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | optional |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | optional |
 | `GOOGLE_REDIRECT_URI` | Google OAuth redirect URI | optional |
+| `GOOGLE_MOBILE_CLIENT_IDS` | Comma-separated native/link-token audiences and presenters | optional |
 | `FACEBOOK_CLIENT_ID` | Facebook OAuth client ID | optional |
 | `FACEBOOK_CLIENT_SECRET` | Facebook OAuth client secret | optional |
 | `FACEBOOK_REDIRECT_URI` | Facebook OAuth redirect URI | optional |
@@ -188,14 +190,41 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/v1/auth/register` | Register with email/password |
+| POST | `/v1/auth/register` | Disabled; administrator provisioning required |
 | POST | `/v1/auth/login` | Login with email/password |
+| POST | `/v1/auth/step-up` | Reauthenticate the current session for protected actions |
 | POST | `/v1/auth/refresh` | Refresh access token |
-| POST | `/v1/auth/logout` | Logout (revoke refresh token) |
+| POST | `/v1/auth/logout` | Revoke family/access tokens (cookie or body) |
+| POST | `/v1/auth/sessions/revoke-all` | Revoke all own sessions and access tokens |
+| POST | `/v1/auth/identities/google` | Link verified Google proof with current session/password |
+| POST | `/v1/auth/identities/facebook` | Link app-bound Facebook proof with current session/password |
+| POST | `/v1/auth/delete-account` | Disabled pending retention policy; no data changed |
 | GET | `/v1/auth/google` | Initiate Google OAuth |
 | GET | `/v1/auth/google/callback` | Google OAuth callback |
 | GET | `/v1/auth/facebook` | Initiate Facebook OAuth |
 | GET | `/v1/auth/facebook/callback` | Facebook OAuth callback |
+
+WORK-0030 requires signing in again after its `auth_version=2` cutover. Access
+tokens require an active database session; rotation/revocation invalidate them.
+Clients must single-flight refresh and retain the new refresh cookie: reusing
+a rotated token revokes its family. OAuth signs in only already-linked subjects;
+matching emails never link/provision accounts. See the [session lifecycle and
+client cutover](context/reference/auth-session-lifecycle.md) for proof, transport,
+migration, recovery and external coordination.
+
+Protected permissions marked `requires_mfa` now require recent, server-side
+step-up evidence. On `403` with code `STEP_UP_REQUIRED`, send
+`POST /v1/auth/step-up` with the same bearer access token and JSON
+`{"password":"<current-password>"}`, then retry the protected action. The response
+returns `verifiedAt` and `expiresAt`; assurance lasts `STEP_UP_TTL_SECONDS`
+(300 seconds by default) and is bound to that active refresh-token session.
+Token rotation creates a new session record, so step-up must be repeated.
+
+Despite the legacy column name, this ceremony is password reauthentication,
+**not second-factor MFA**. OAuth-only accounts and tokens without an active
+session fail closed. MFA enrollment and external-provider step-up require a
+separate design. Clients must add the reauthentication flow before users can
+perform newly protected actions.
 
 ### Expense Reports
 
@@ -237,6 +266,68 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 | GET/POST/PUT/DELETE | `/v1/roles` | Role management |
 | GET/POST/PUT/DELETE | `/v1/permissions` | Permission management |
 
+RBAC mutations evaluate the exact final state and commit assignments, affected
+users' `roles_version` increments, and audit events together. Existing access
+tokens for those users become invalid; refresh or sign in again before retrying.
+The active system `super_admin` role is the explicit preventive separation-of-
+duties exemption. Assigning/removing administrator roles requires additional
+stepped-up authority, and the last active, verified super-admin cannot be
+removed, deactivated, or deleted. Core control-plane permissions cannot be deleted.
+
+The ordinary system `admin` role uses an explicit, SoD-compliant allowlist
+([WORK-0047](context/work/0047-align-seeded-administrator-role-with-sod.md)).
+It manages configuration and ordinary administration, with report/audit support
+reads and exports. Expense submission belongs to `employee`, approval to
+`approver`, and posting/payment to `finance`; these are not implicit administrator
+capabilities. Combined-role assignments still undergo final-state SoD checks.
+New permissions are **not** automatically granted to `admin`.
+
+#### Existing-database administrator catalog migration
+
+Bootstrap SQL only initializes an empty database. For an existing database, use
+the operator-only, dry-run-first command below; never replay `src/db/schema.sql`.
+This is a grant-data migration, not DDL, so no Drizzle table change is required.
+The catalog is defined in `src/policies/roleCatalog.ts` and tested against the seed.
+
+```bash
+npm run build
+# Uses configured DATABASE_URL; inspect the database identity and grant diff.
+npm run db:migrate-admin-catalog -- --dry-run
+RBAC_MIGRATION_OPERATOR='approved change reference / operator' \
+  npm run db:migrate-admin-catalog -- --apply
+```
+
+For the existing production Compose service, build the image first, then use its
+configured database connection without publishing ports or recreating PostgreSQL:
+
+```bash
+docker compose -f compose.prod.yaml build expense-api
+docker compose -f compose.prod.yaml run --rm --no-deps expense-api \
+  node dist/db/migrateAdminRoleCatalog.js --dry-run
+docker compose -f compose.prod.yaml run --rm --no-deps \
+  -e RBAC_MIGRATION_OPERATOR='approved change reference / operator' expense-api \
+  node dist/db/migrateAdminRoleCatalog.js --apply
+docker compose -f compose.prod.yaml up -d --no-deps expense-api
+```
+
+The command requires the expected system catalog, every allowlisted permission,
+an active verified system super-admin, compliant ordinary seeded roles, and
+compliant combined final permissions for every administrator-assigned user.
+Conflicts abort the entire transaction; resolve them explicitly rather than
+silently assigning compensating financial roles. Application RBAC writes share
+its advisory lock. Direct operator SQL must not modify RBAC concurrently.
+Grant changes, all affected users' `roles_version` increments (including inactive
+users), and a sensitive audit event commit together or all roll back. The audit
+identifies the database operator/change label without impersonating an ERP user.
+An unchanged rerun neither writes an audit event nor invalidates tokens again.
+Affected users must refresh or sign in; clients must honor returned permission
+names rather than treating the role name as a financial-access bypass.
+
+Run the database regressions separately against fresh disposable PostgreSQL/
+pgvector databases: `ADMIN_CATALOG_INTEGRATION=1` for
+`dist/services/roleCatalog.integration.test.js` and `RBAC_INTEGRATION=1` for
+`dist/services/rbac.integration.test.js`. Both refuse populated databases.
+
 ### Expense Metadata
 
 | Method | Endpoint | Description |
@@ -272,7 +363,9 @@ All endpoints are prefixed with `/v1`. Health endpoints are at `/health` (no pre
 
 ## Usage Examples
 
-### Register a User
+### Public Registration (Disabled)
+
+This request returns 403; use authorized administrator provisioning instead.
 
 ```bash
 curl -X POST http://localhost:3002/v1/auth/register \
@@ -318,7 +411,8 @@ curl -X POST http://localhost:3002/v1/expense-reports/<report_id>/receipts \
 
 The database uses PostgreSQL 16 with pgvector. Tables:
 - `users` - User accounts
-- `refresh_tokens` - JWT refresh token storage
+- `refresh_tokens` - Hashed JWT ledger, token families and revocation/rotation
+- `user_identities` - Unique provider subjects and explicit account bindings
 - `expense_reports` - Expense reports
 - `expense_lines` - Individual expense items
 - `receipts` - Uploaded receipt files
@@ -376,9 +470,19 @@ When `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_BUCKET` are set, the S3 provider
 ```bash
 npm run dev      # Start development server with hot reload (tsx watch)
 npm run build    # Compile TypeScript to JavaScript
+npm run check    # Convention lint/typecheck, regression tests, and OpenAPI contract
+npm run verify:security # Fail on production high/critical dependency advisories
+npm run test:postgres   # Explicit TEST_DATABASE_URL; isolated disposable databases
 npm run start    # Start production server (dist/index.js)
 npm run db:init  # Initialize schema and seed users
 ```
+
+CI runs repository/security checks, isolated PostgreSQL 16/pgvector regressions,
+and an audited production-image build with an embedded CycloneDX SBOM.
+For clean-container verification, dependency updates, contract review, and safe
+rollout/rollback, see [release quality gates](context/reference/release-quality-gates.md).
+The known broader money/sync/job/authorization gaps remain separately tracked;
+passing these checks is not complete ERP release assurance.
 
 ## Dev Container Setup
 ```bash

@@ -25,7 +25,7 @@ export const CreatePermissionSchema = z.object({
   description: z.string().max(1000).optional().openapi({ example: 'View custom reports' }),
   category: z.string().max(100).optional().openapi({ example: 'report' }),
   riskLevel: PermissionRiskLevelSchema.optional().openapi({ example: 'low' }),
-  requiresMfa: z.boolean().optional().default(false).openapi({ example: false }),
+  requiresMfa: z.boolean().optional().openapi({ example: false }),
 }).openapi('CreatePermission');
 
 // Update permission request

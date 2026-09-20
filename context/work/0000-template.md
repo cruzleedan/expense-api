@@ -62,7 +62,10 @@ enough detail that an agent could implement it from this document alone.
 ## Log
 
 <!-- Append-only. One line per status change or notable event. This is the
-     audit trail — do not rewrite past entries. -->
+     audit trail — do not rewrite past entries. During implementation, record
+     focused/full verification, schema application, deployment/health evidence,
+     and any external release gate as separate facts. Keep secrets, live tokens,
+     container IDs, and raw transient command output out of this file. -->
 - YYYY-MM-DD proposed — initial draft
 
 ---

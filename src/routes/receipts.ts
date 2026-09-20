@@ -31,6 +31,8 @@ import {
   ReparseReceiptResponseSchema,
 } from '../schemas/receipt.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
+import { requestBodyLimit } from '../middleware/requestBodyLimit.js';
+import { env } from '../config/env.js';
 
 // Router for receipts under reports: /expense-reports/:reportId/receipts
 const receiptsRouter = new OpenAPIHono();
@@ -39,6 +41,10 @@ const receiptsRouter = new OpenAPIHono();
 const receiptDirectRouter = new OpenAPIHono();
 
 // All routes require authentication
+// Multipart framing adds a small amount of overhead beyond the file itself.
+const receiptRequestLimit = env.MAX_FILE_SIZE + 256 * 1024;
+receiptsRouter.use('*', requestBodyLimit(receiptRequestLimit));
+receiptDirectRouter.use('*', requestBodyLimit(receiptRequestLimit));
 receiptsRouter.use('*', authMiddleware);
 receiptDirectRouter.use('*', authMiddleware);
 

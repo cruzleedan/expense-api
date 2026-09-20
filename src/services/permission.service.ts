@@ -8,7 +8,11 @@ import type {
   PermissionCheckResult,
   AuthUser,
 } from '../types/index.js';
-import { NotFoundError, ConflictError } from '../types/index.js';
+import {
+  StepUpRequiredError,
+} from '../types/index.js';
+import { isStepUpFresh } from '../policies/rbac.js';
+import { env } from '../config/env.js';
 import {
   buildOrderByClause,
   buildSearchCondition,
@@ -144,125 +148,6 @@ export async function listPermissions(
     permissions: dataResult.rows,
     total: parseInt(countResult.rows[0].count, 10),
   };
-}
-
-/**
- * Create a new permission
- */
-export interface CreatePermissionInput {
-  name: string;
-  description?: string;
-  category?: string;
-  riskLevel?: PermissionRiskLevel;
-  requiresMfa?: boolean;
-}
-
-export async function createPermission(input: CreatePermissionInput): Promise<Permission> {
-  // Check for duplicate name
-  const existing = await getPermissionByName(input.name);
-  if (existing) {
-    throw new ConflictError(`Permission with name "${input.name}" already exists`);
-  }
-
-  const result = await db.query<Permission>(
-    `INSERT INTO permissions (name, description, category, risk_level, requires_mfa)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, name, description, category, risk_level, requires_mfa, created_at`,
-    [
-      input.name,
-      input.description ?? null,
-      input.category ?? null,
-      input.riskLevel ?? null,
-      input.requiresMfa ?? false,
-    ]
-  );
-
-  return result.rows[0];
-}
-
-/**
- * Update an existing permission
- */
-export interface UpdatePermissionInput {
-  description?: string;
-  category?: string;
-  riskLevel?: PermissionRiskLevel | null;
-  requiresMfa?: boolean;
-}
-
-export async function updatePermission(
-  permissionId: string,
-  input: UpdatePermissionInput
-): Promise<Permission> {
-  const existing = await getPermissionById(permissionId);
-  if (!existing) {
-    throw new NotFoundError('Permission');
-  }
-
-  const updates: string[] = [];
-  const values: unknown[] = [];
-  let paramIndex = 1;
-
-  if (input.description !== undefined) {
-    updates.push(`description = $${paramIndex}`);
-    values.push(input.description);
-    paramIndex++;
-  }
-
-  if (input.category !== undefined) {
-    updates.push(`category = $${paramIndex}`);
-    values.push(input.category);
-    paramIndex++;
-  }
-
-  if (input.riskLevel !== undefined) {
-    updates.push(`risk_level = $${paramIndex}`);
-    values.push(input.riskLevel);
-    paramIndex++;
-  }
-
-  if (input.requiresMfa !== undefined) {
-    updates.push(`requires_mfa = $${paramIndex}`);
-    values.push(input.requiresMfa);
-    paramIndex++;
-  }
-
-  if (updates.length === 0) {
-    return existing;
-  }
-
-  values.push(permissionId);
-
-  const result = await db.query<Permission>(
-    `UPDATE permissions SET ${updates.join(', ')}
-     WHERE id = $${paramIndex}
-     RETURNING id, name, description, category, risk_level, requires_mfa, created_at`,
-    values
-  );
-
-  return result.rows[0];
-}
-
-/**
- * Delete a permission
- */
-export async function deletePermission(permissionId: string): Promise<void> {
-  const existing = await getPermissionById(permissionId);
-  if (!existing) {
-    throw new NotFoundError('Permission');
-  }
-
-  // Check if permission is assigned to any roles
-  const roleCount = await db.query<{ count: string }>(
-    'SELECT COUNT(*) as count FROM role_permissions WHERE permission_id = $1',
-    [permissionId]
-  );
-
-  if (parseInt(roleCount.rows[0].count, 10) > 0) {
-    throw new ConflictError('Cannot delete permission that is assigned to roles');
-  }
-
-  await db.query('DELETE FROM permissions WHERE id = $1', [permissionId]);
 }
 
 // ============================================================================
@@ -475,88 +360,6 @@ export async function getUserAuthContext(userId: string): Promise<AuthUser | nul
   };
 }
 
-/**
- * Assign a role to a user
- */
-export async function assignRoleToUser(
-  userId: string,
-  roleId: string,
-  assignedBy: string
-): Promise<void> {
-  // Insert role assignment
-  await db.query(
-    `INSERT INTO user_roles (user_id, role_id, assigned_by)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, role_id) DO NOTHING`,
-    [userId, roleId, assignedBy]
-  );
-
-  // Increment roles_version to invalidate existing tokens
-  await db.query(
-    `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
-    [userId]
-  );
-}
-
-/**
- * Remove a role from a user
- */
-export async function removeRoleFromUser(userId: string, roleId: string): Promise<void> {
-  await db.query(
-    `DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
-    [userId, roleId]
-  );
-
-  // Increment roles_version to invalidate existing tokens
-  await db.query(
-    `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
-    [userId]
-  );
-}
-
-/**
- * Set user roles (replace all existing roles)
- */
-export async function setUserRoles(
-  userId: string,
-  roleIds: string[],
-  assignedBy: string
-): Promise<void> {
-  const client = await db.getClient();
-
-  try {
-    await client.query('BEGIN');
-
-    // Remove all existing roles
-    await client.query(
-      `DELETE FROM user_roles WHERE user_id = $1`,
-      [userId]
-    );
-
-    // Add new roles
-    for (const roleId of roleIds) {
-      await client.query(
-        `INSERT INTO user_roles (user_id, role_id, assigned_by)
-         VALUES ($1, $2, $3)`,
-        [userId, roleId, assignedBy]
-      );
-    }
-
-    // Increment roles_version
-    await client.query(
-      `UPDATE users SET roles_version = roles_version + 1 WHERE id = $1`,
-      [userId]
-    );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 // ============================================================================
 // Permission Checking
 // ============================================================================
@@ -619,6 +422,43 @@ export async function hasAnyPermission(
   const userPermSet = new Set(userPermissions);
 
   return permissionNames.some(p => userPermSet.has(p));
+}
+
+export async function assertPermissionStepUp(
+  userId: string,
+  sessionId: string | undefined,
+  permissionNames: string[]
+): Promise<void> {
+  if (permissionNames.length === 0) return;
+
+  const protectedPermissions = await db.query<{ name: string }>(
+    `SELECT name FROM permissions
+     WHERE name = ANY($1::text[]) AND requires_mfa = true`,
+    [permissionNames]
+  );
+  if (protectedPermissions.rows.length === 0) return;
+  if (!sessionId) throw new StepUpRequiredError();
+
+  const assurance = await db.query<{ step_up_verified_at: Date | null }>(
+    `SELECT step_up_verified_at
+     FROM refresh_tokens
+     WHERE id = $1
+       AND user_id = $2
+       AND revoked_at IS NULL
+       AND expires_at > NOW()`,
+    [sessionId, userId]
+  );
+  if (
+    !isStepUpFresh(
+      assurance.rows[0]?.step_up_verified_at,
+      new Date(),
+      env.STEP_UP_TTL_SECONDS
+    )
+  ) {
+    throw new StepUpRequiredError(
+      `Recent step-up authentication is required for: ${protectedPermissions.rows.map((row) => row.name).join(', ')}`
+    );
+  }
 }
 
 /**
@@ -696,186 +536,4 @@ export async function validateSod(permissions: string[]): Promise<SodValidationR
 export async function validateUserSod(userId: string): Promise<SodValidationResult> {
   const permissions = await getUserPermissions(userId);
   return validateSod(permissions);
-}
-
-/**
- * Validate if adding new roles to a user would violate SoD
- */
-export async function validateRoleAssignmentSod(
-  userId: string,
-  newRoleIds: string[]
-): Promise<SodValidationResult> {
-  // Get current user permissions
-  const currentPermissions = await getUserPermissions(userId);
-
-  // Get permissions from new roles
-  const newPermissions: string[] = [];
-  for (const roleId of newRoleIds) {
-    const rolePerms = await getRolePermissionNames(roleId);
-    newPermissions.push(...rolePerms);
-  }
-
-  // Combine and deduplicate
-  const allPermissions = [...new Set([...currentPermissions, ...newPermissions])];
-
-  return validateSod(allPermissions);
-}
-
-/**
- * Validate if adding permissions to a role would violate SoD for any user with that role
- */
-export async function validateRolePermissionChange(
-  roleId: string,
-  newPermissionNames: string[]
-): Promise<SodValidationResult> {
-  // Get current role permissions
-  const currentPerms = await getRolePermissionNames(roleId);
-  const allPerms = [...new Set([...currentPerms, ...newPermissionNames])];
-
-  // Check the role's permission set itself
-  const roleResult = await validateSod(allPerms);
-  if (!roleResult.valid) {
-    return roleResult;
-  }
-
-  // Check all users with this role
-  const usersResult = await db.query<{ user_id: string }>(
-    `SELECT user_id FROM user_roles WHERE role_id = $1`,
-    [roleId]
-  );
-
-  for (const { user_id } of usersResult.rows) {
-    // Get user's permissions from OTHER roles
-    const otherPerms = await db.query<{ name: string }>(
-      `SELECT DISTINCT p.name
-       FROM permissions p
-       JOIN role_permissions rp ON p.id = rp.permission_id
-       JOIN user_roles ur ON rp.role_id = ur.role_id
-       WHERE ur.user_id = $1 AND ur.role_id != $2`,
-      [user_id, roleId]
-    );
-
-    const combinedPerms = [...allPerms, ...otherPerms.rows.map(r => r.name)];
-    const userResult = await validateSod(combinedPerms);
-
-    if (!userResult.valid) {
-      return {
-        valid: false,
-        violations: userResult.violations.map(v => ({
-          ...v,
-          description: `${v.description} (affects user ${user_id})`,
-        })),
-      };
-    }
-  }
-
-  return { valid: true, violations: [] };
-}
-
-// ============================================================================
-// Role Management (Admin Operations)
-// ============================================================================
-
-/**
- * Create a new custom role
- */
-export async function createRole(
-  name: string,
-  description: string | null,
-  permissionIds: string[],
-  createdBy: string
-): Promise<Role> {
-  const client = await db.getClient();
-
-  try {
-    await client.query('BEGIN');
-
-    // Create the role
-    const roleResult = await client.query<Role>(
-      `INSERT INTO roles (name, description, is_system)
-       VALUES ($1, $2, false)
-       RETURNING id, name, description, is_system, is_active, created_at, updated_at`,
-      [name, description]
-    );
-
-    const role = roleResult.rows[0];
-
-    // Assign permissions
-    for (const permissionId of permissionIds) {
-      await client.query(
-        `INSERT INTO role_permissions (role_id, permission_id, granted_by)
-         VALUES ($1, $2, $3)`,
-        [role.id, permissionId, createdBy]
-      );
-    }
-
-    await client.query('COMMIT');
-    return role;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Update a role's permissions
- */
-export async function updateRolePermissions(
-  roleId: string,
-  permissionIds: string[],
-  updatedBy: string
-): Promise<void> {
-  const client = await db.getClient();
-
-  try {
-    await client.query('BEGIN');
-
-    // Remove existing permissions
-    await client.query(
-      `DELETE FROM role_permissions WHERE role_id = $1`,
-      [roleId]
-    );
-
-    // Add new permissions
-    for (const permissionId of permissionIds) {
-      await client.query(
-        `INSERT INTO role_permissions (role_id, permission_id, granted_by)
-         VALUES ($1, $2, $3)`,
-        [roleId, permissionId, updatedBy]
-      );
-    }
-
-    // Update role's updated_at
-    await client.query(
-      `UPDATE roles SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [roleId]
-    );
-
-    // Increment roles_version for all users with this role
-    await client.query(
-      `UPDATE users SET roles_version = roles_version + 1
-       WHERE id IN (SELECT user_id FROM user_roles WHERE role_id = $1)`,
-      [roleId]
-    );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Delete a role (only non-system roles)
- */
-export async function deleteRole(roleId: string): Promise<boolean> {
-  const result = await db.query(
-    `DELETE FROM roles WHERE id = $1 AND is_system = false RETURNING id`,
-    [roleId]
-  );
-  return result.rowCount !== null && result.rowCount > 0;
 }

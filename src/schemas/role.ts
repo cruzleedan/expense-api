@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@hono/zod-openapi';
 import { PaginationMetaSchema } from './common.js';
 
 // Role schemas

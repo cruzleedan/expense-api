@@ -1,8 +1,9 @@
-import { randomBytes, scrypt } from 'crypto';
-import { promisify } from 'util';
-import { query } from '../db/client.js';
-import type { User, Role } from '../types/index.js';
-import { NotFoundError, ConflictError, ValidationError } from '../types/index.js';
+import { hashPassword } from '../utils/password.js';
+import { validatePasswordStrength } from '../policies/password.js';
+import { assignDefaultRole, isDuplicateEmail } from './accountProvisioning.service.js';
+import { query, transaction } from '../db/client.js';
+import type { User } from '../types/index.js';
+import { NotFoundError, ConflictError } from '../types/index.js';
 import {
   getOffset,
   buildOrderByClause,
@@ -11,8 +12,10 @@ import {
   USER_SEARCHABLE_FIELDS,
   type PaginationParams,
 } from '../utils/pagination.js';
-
-const scryptAsync = promisify(scrypt);
+import {
+  acquireRbacMutationLock,
+  assertUserCanLoseControlPlaneEligibility,
+} from './rbac.service.js';
 
 export interface UserRole {
   id: string;
@@ -75,18 +78,6 @@ function toSafeUser(user: User): SafeUser {
   return { ...safe, status: user.status ?? computeStatus(user) };
 }
 
-async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16).toString('hex');
-  const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `${salt}:${derivedKey.toString('hex')}`;
-}
-
-function validatePasswordStrength(password: string): void {
-  if (password.length < 8) {
-    throw new ValidationError('Password must be at least 8 characters');
-  }
-}
-
 export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const existing = await query<User>(
     'SELECT id FROM users WHERE email = $1',
@@ -96,7 +87,7 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
     throw new ConflictError('Email already registered');
   }
 
-  validatePasswordStrength(input.password);
+  validatePasswordStrength(input.password, input.email, input.username);
 
   if (input.managerId) {
     const manager = await query<User>(
@@ -121,36 +112,33 @@ export async function createUser(input: CreateUserInput): Promise<SafeUser> {
   const passwordHash = await hashPassword(input.password);
   const username = input.username || input.email.split('@')[0];
 
-  const result = await query<User>(
-    `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true)
-     RETURNING *`,
-    [
-      input.email,
-      username,
-      input.firstName ?? null,
-      input.lastName ?? null,
-      passwordHash,
-      input.departmentId ?? null,
-      input.managerId ?? null,
-      input.costCenter ?? null,
-      input.spendingProfile ? JSON.stringify(input.spendingProfile) : '{}',
-      input.llmPreferences ? JSON.stringify(input.llmPreferences) : '{}',
-    ]
-  );
+  try {
+    return await transaction(async client => {
+      const result = await client.query<User>(
+        `INSERT INTO users (email, username, first_name, last_name, password_hash, department_id, manager_id, cost_center, spending_profile, llm_preferences, roles_version, is_active, is_verified)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, true, true)
+         RETURNING *`,
+        [
+          input.email,
+          username,
+          input.firstName ?? null,
+          input.lastName ?? null,
+          passwordHash,
+          input.departmentId ?? null,
+          input.managerId ?? null,
+          input.costCenter ?? null,
+          input.spendingProfile ? JSON.stringify(input.spendingProfile) : '{}',
+          input.llmPreferences ? JSON.stringify(input.llmPreferences) : '{}',
+        ]
+      );
 
-  // Assign default employee role
-  const roleResult = await query<{ id: string }>(
-    `SELECT id FROM roles WHERE name = 'employee' AND is_active = true`
-  );
-  if (roleResult.rows.length > 0) {
-    await query(
-      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [result.rows[0].id, roleResult.rows[0].id]
-    );
+      await assignDefaultRole(client, result.rows[0].id);
+      return toSafeUser(result.rows[0]);
+    });
+  } catch (error) {
+    if (isDuplicateEmail(error)) throw new ConflictError('Email already registered');
+    throw error;
   }
-
-  return toSafeUser(result.rows[0]);
 }
 
 export async function getUserById(userId: string): Promise<SafeUser> {
@@ -357,41 +345,42 @@ export async function updateUser(
 
   values.push(userId);
 
-  const result = await query<User>(
-    `UPDATE users SET ${updates.join(', ')}
+  const updateStatement = `UPDATE users SET ${updates.join(', ')}
      WHERE id = $${paramIndex}
-     RETURNING *`,
-    values
-  );
-
-  // If user was deactivated, revoke all their tokens
-  if (input.isActive === false) {
-    await query(
-      'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
-      [userId]
-    );
-  }
+     RETURNING *`;
+  const result = input.isActive === false
+    ? await transaction(async (client) => {
+        await acquireRbacMutationLock(client);
+        await assertUserCanLoseControlPlaneEligibility(client, userId, false);
+        const updated = await client.query<User>(updateStatement, values);
+        await client.query(
+          'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
+          [userId]
+        );
+        return updated;
+      })
+    : await query<User>(updateStatement, values);
 
   return toSafeUser(result.rows[0]);
 }
 
 export async function deleteUser(userId: string): Promise<void> {
-  await getUserById(userId);
-
-  // Check if user has any expense reports
-  const reports = await query<{ count: string }>(
-    'SELECT COUNT(*) as count FROM expense_reports WHERE user_id = $1',
-    [userId]
-  );
-
-  if (parseInt(reports.rows[0].count, 10) > 0) {
-    throw new ConflictError('Cannot delete user with existing expense reports. Deactivate the user instead.');
-  }
-
-  await query('DELETE FROM users WHERE id = $1', [userId]);
+  await transaction(async (client) => {
+    await acquireRbacMutationLock(client);
+    await assertUserCanLoseControlPlaneEligibility(client, userId, false);
+    const reports = await client.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM expense_reports WHERE user_id = $1',
+      [userId]
+    );
+    if (parseInt(reports.rows[0].count, 10) > 0) {
+      throw new ConflictError('Cannot delete user with existing expense reports. Deactivate the user instead.');
+    }
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+  });
 }
 
-// Role management functions
+// Role reads used by the user administration response model. Role mutations
+// live in permission.service.ts so all routes share one policy boundary.
 
 export async function getUserRolesById(userId: string): Promise<UserRole[]> {
   const result = await query<UserRole>(
@@ -426,107 +415,4 @@ export async function listUsersWithRoles(
   );
 
   return { users: usersWithRoles, total };
-}
-
-export async function setUserRolesById(
-  userId: string,
-  roleIds: string[],
-  assignedBy?: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  // Validate all role IDs exist
-  for (const roleId of roleIds) {
-    const role = await query<Role>(
-      'SELECT id FROM roles WHERE id = $1 AND is_active = true',
-      [roleId]
-    );
-    if (role.rows.length === 0) {
-      throw new NotFoundError(`Role ${roleId}`);
-    }
-  }
-
-  // Remove existing roles
-  await query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
-
-  // Assign new roles
-  for (const roleId of roleIds) {
-    await query(
-      `INSERT INTO user_roles (user_id, role_id, assigned_by)
-       VALUES ($1, $2, $3)
-       ON CONFLICT DO NOTHING`,
-      [userId, roleId, assignedBy ?? null]
-    );
-  }
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
-}
-
-export async function addUserRole(
-  userId: string,
-  roleId: string,
-  assignedBy?: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  const role = await query<Role>(
-    'SELECT id FROM roles WHERE id = $1 AND is_active = true',
-    [roleId]
-  );
-  if (role.rows.length === 0) {
-    throw new NotFoundError('Role');
-  }
-
-  // Check if already assigned
-  const existing = await query(
-    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2',
-    [userId, roleId]
-  );
-  if (existing.rows.length > 0) {
-    throw new ConflictError('Role already assigned to user');
-  }
-
-  await query(
-    `INSERT INTO user_roles (user_id, role_id, assigned_by)
-     VALUES ($1, $2, $3)`,
-    [userId, roleId, assignedBy ?? null]
-  );
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
-}
-
-export async function removeUserRole(
-  userId: string,
-  roleId: string
-): Promise<UserRole[]> {
-  await getUserById(userId);
-
-  const result = await query(
-    'DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 RETURNING *',
-    [userId, roleId]
-  );
-
-  if (result.rowCount === 0) {
-    throw new NotFoundError('User role assignment');
-  }
-
-  // Increment roles_version to invalidate existing tokens
-  await query(
-    'UPDATE users SET roles_version = roles_version + 1 WHERE id = $1',
-    [userId]
-  );
-
-  return getUserRolesById(userId);
 }

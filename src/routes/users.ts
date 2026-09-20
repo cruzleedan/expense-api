@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
-import { authMiddleware, getUserId } from '../middleware/auth.js';
-import { requirePermission } from '../middleware/permission.js';
+import { authMiddleware, getUser, getUserId } from '../middleware/auth.js';
+import { getAuthUser, requireAnyPermission, requirePermission } from '../middleware/permission.js';
 import { unlockAccount, deactivateAccount, reactivateAccount } from '../services/auth.service.js';
 import {
   createUser,
@@ -10,10 +10,13 @@ import {
   updateUser,
   deleteUser,
   getUserRolesById,
-  setUserRolesById,
-  addUserRole,
-  removeUserRole,
 } from '../services/user.service.js';
+import {
+  assignRoleToUser,
+  removeRoleFromUser,
+  setUserRoles,
+  type RbacMutationActor,
+} from '../services/rbac.service.js';
 import { paginate } from '../utils/pagination.js';
 import {
   UserWithRolesSchema,
@@ -26,8 +29,15 @@ import {
   AddUserRoleSchema,
 } from '../schemas/user.js';
 import { ErrorSchema, MessageSchema, UuidParamSchema, AuthHeaderSchema } from '../schemas/common.js';
+import { ForbiddenError, type JwtPayloadV3 } from '../types/index.js';
+import { assertCanUpdateUser, assertCanViewUser } from '../policies/userAdministration.js';
 
 const usersRouter = new OpenAPIHono();
+
+function getRbacActor(c: Parameters<typeof getUser>[0]): RbacMutationActor {
+  const jwt = getUser(c) as unknown as JwtPayloadV3;
+  return { id: jwt.sub, rolesVersion: jwt.roles_version, sessionId: jwt.refresh_token_id };
+}
 
 usersRouter.use('*', authMiddleware);
 
@@ -58,6 +68,7 @@ const listRoute = createRoute({
   summary: 'List users',
   description: 'Get paginated list of users with their roles',
   security,
+  middleware: [requirePermission('user.view', 'role.view')] as const,
   request: {
     query: UserListQuerySchema,
     headers: AuthHeaderSchema,
@@ -107,6 +118,7 @@ const createRoute_ = createRoute({
   summary: 'Create user',
   description: 'Create a new user with default employee role',
   security,
+  middleware: [requirePermission('user.create')] as const,
   request: {
     headers: AuthHeaderSchema,
     body: {
@@ -151,6 +163,7 @@ const getRoute = createRoute({
   summary: 'Get user',
   description: 'Get a specific user by ID with their roles',
   security,
+  middleware: [requireAnyPermission('user.view', 'user.edit.own')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -173,6 +186,8 @@ const getRoute = createRoute({
 
 const getHandler: RouteHandler<typeof getRoute> = async (c) => {
   const { id } = c.req.valid('param');
+  const actor = getAuthUser(c);
+  assertCanViewUser(actor, id);
 
   const user = await getUserWithRoles(id);
 
@@ -188,6 +203,7 @@ const updateRoute = createRoute({
   summary: 'Update user',
   description: 'Update an existing user',
   security,
+  middleware: [requireAnyPermission('user.edit', 'user.edit.own')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -222,6 +238,8 @@ const updateRoute = createRoute({
 const updateHandler: RouteHandler<typeof updateRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const input = c.req.valid('json');
+  const actor = getAuthUser(c);
+  assertCanUpdateUser(actor, id, input);
 
   const user = await updateUser(id, input);
   const roles = await getUserRolesById(id);
@@ -238,6 +256,7 @@ const deleteRoute = createRoute({
   summary: 'Delete user',
   description: 'Delete a user',
   security,
+  middleware: [requirePermission('user.delete')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -264,6 +283,7 @@ const deleteRoute = createRoute({
 
 const deleteHandler: RouteHandler<typeof deleteRoute> = async (c) => {
   const { id } = c.req.valid('param');
+  if (id === getUserId(c)) throw new ForbiddenError('Users cannot delete their own account');
 
   await deleteUser(id);
 
@@ -350,6 +370,7 @@ const deactivateRoute = createRoute({
 
 const deactivateHandler: RouteHandler<typeof deactivateRoute> = async (c) => {
   const { id } = c.req.valid('param');
+  if (id === getUserId(c)) throw new ForbiddenError('Users cannot deactivate their own account');
 
   await deactivateAccount(id);
   const user = await getUserWithRoles(id);
@@ -415,6 +436,7 @@ const getUserRolesRoute = createRoute({
   summary: 'Get user roles',
   description: 'Get all roles assigned to a user',
   security,
+  middleware: [requirePermission('role.view')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -452,6 +474,7 @@ const setUserRolesRoute = createRoute({
   summary: 'Set user roles',
   description: 'Replace all roles for a user',
   security,
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -482,9 +505,8 @@ const setUserRolesRoute = createRoute({
 const setUserRolesHandler: RouteHandler<typeof setUserRolesRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleIds } = c.req.valid('json');
-  const assignedBy = getUserId(c);
-
-  const roles = await setUserRolesById(id, roleIds, assignedBy);
+  await setUserRoles(id, roleIds, getRbacActor(c));
+  const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
@@ -498,6 +520,7 @@ const addUserRoleRoute = createRoute({
   summary: 'Add role to user',
   description: 'Add a single role to a user',
   security,
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UuidParamSchema,
     headers: AuthHeaderSchema,
@@ -532,9 +555,8 @@ const addUserRoleRoute = createRoute({
 const addUserRoleHandler: RouteHandler<typeof addUserRoleRoute> = async (c) => {
   const { id } = c.req.valid('param');
   const { roleId } = c.req.valid('json');
-  const assignedBy = getUserId(c);
-
-  const roles = await addUserRole(id, roleId, assignedBy);
+  await assignRoleToUser(id, roleId, getRbacActor(c));
+  const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };
@@ -548,6 +570,7 @@ const removeUserRoleRoute = createRoute({
   summary: 'Remove role from user',
   description: 'Remove a role from a user',
   security,
+  middleware: [requirePermission('role.assign')] as const,
   request: {
     params: UserRoleParamSchema,
     headers: AuthHeaderSchema,
@@ -570,8 +593,8 @@ const removeUserRoleRoute = createRoute({
 
 const removeUserRoleHandler: RouteHandler<typeof removeUserRoleRoute> = async (c) => {
   const { id, roleId } = c.req.valid('param');
-
-  const roles = await removeUserRole(id, roleId);
+  await removeRoleFromUser(id, roleId, getRbacActor(c));
+  const roles = await getUserRolesById(id);
 
   return c.json({ roles: formatUserRoles(roles) } as any, 200);
 };

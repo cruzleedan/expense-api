@@ -1,13 +1,24 @@
 import { db } from '../db/drizzle.js';
-import { expenseReports, expenseLines, users, userRoles, rolePermissions, permissions, expenseReportFieldValues } from '../db/schema.js';
+import {
+  expenseReports,
+  expenseLines,
+  users,
+  userRoles,
+  rolePermissions,
+  permissions,
+  expenseReportFieldValues,
+  fieldDefinitions,
+  formDefinitions,
+} from '../db/schema.js';
 import type { ExpenseReport } from '../db/schema.js';
-import { NotFoundError, ForbiddenError, ValidationError } from '../types/index.js';
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../types/index.js';
 import { query } from '../db/client.js';
 import {
   eq, and, or, ilike, asc, desc, count, gt, isNull, inArray, sql, sum, type SQL,
 } from 'drizzle-orm';
 import { getOffset, type PaginationParams } from '../utils/pagination.js';
 import { canAccessReport } from './approval.service.js';
+import { assertExpectedVersion, assertReportTransition } from '../policies/reportLifecycle.js';
 
 export type { ExpenseReport };
 export type ExpenseReportWithCustomFields = ExpenseReport & { customFields: Record<string, string | number | boolean> };
@@ -19,14 +30,29 @@ interface ReportCustomFieldDef {
   field_type: string;
 }
 
-async function getReportCustomFieldDefsByKey(): Promise<Map<string, ReportCustomFieldDef>> {
-  const result = await query<ReportCustomFieldDef & { field_key: string }>(
-    `SELECT fd.id, fd.field_key, fd.field_type
-     FROM field_definitions fd
-     JOIN form_definitions f ON f.id = fd.form_id
-     WHERE f.screen_id = 'expense_report' AND f.status = 'published' AND fd.is_system_defined = false`
-  );
-  return new Map(result.rows.map((r) => [r.field_key, { id: r.id, field_type: r.field_type }]));
+type DrizzleTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type DrizzleExecutor = typeof db | DrizzleTransaction;
+
+async function getReportCustomFieldDefsByKey(
+  executor: DrizzleExecutor = db
+): Promise<Map<string, ReportCustomFieldDef>> {
+  const rows = await executor
+    .select({
+      id: fieldDefinitions.id,
+      fieldKey: fieldDefinitions.fieldKey,
+      fieldType: fieldDefinitions.fieldType,
+    })
+    .from(fieldDefinitions)
+    .innerJoin(formDefinitions, eq(formDefinitions.id, fieldDefinitions.formId))
+    .where(and(
+      eq(formDefinitions.screenId, 'expense_report'),
+      eq(formDefinitions.status, 'published'),
+      eq(fieldDefinitions.isSystemDefined, false)
+    ));
+  return new Map(rows.map((row) => [
+    row.fieldKey,
+    { id: row.id, field_type: row.fieldType },
+  ]));
 }
 
 function coerceReportCustomFieldValue(fieldType: string, raw: string): string | number | boolean {
@@ -36,20 +62,21 @@ function coerceReportCustomFieldValue(fieldType: string, raw: string): string | 
 }
 
 async function setExpenseReportCustomFields(
+  executor: DrizzleExecutor,
   reportId: string,
   customFields: Record<string, string | number | boolean>
 ): Promise<void> {
-  const defsByKey = await getReportCustomFieldDefsByKey();
+  const defsByKey = await getReportCustomFieldDefsByKey(executor);
   const unknown = Object.keys(customFields).filter((k) => !defsByKey.has(k));
   if (unknown.length > 0) {
     throw new ValidationError(`Unknown or non-custom field(s) on expense_report: ${unknown.join(', ')}`);
   }
 
-  await db.delete(expenseReportFieldValues).where(eq(expenseReportFieldValues.expenseReportId, reportId));
+  await executor.delete(expenseReportFieldValues).where(eq(expenseReportFieldValues.expenseReportId, reportId));
   const entries = Object.entries(customFields);
   if (entries.length === 0) return;
 
-  await db.insert(expenseReportFieldValues).values(
+  await executor.insert(expenseReportFieldValues).values(
     entries.map(([key, value]) => ({
       expenseReportId: reportId,
       fieldId: defsByKey.get(key)!.id,
@@ -104,8 +131,8 @@ function toResponse(report: ExpenseReport, computedTotal: number): ExpenseReport
 /**
  * Fetch the live SUM(amount) of non-deleted expense lines for a report.
  */
-async function computeTotal(reportId: string): Promise<number> {
-  const [row] = await db
+async function computeTotal(reportId: string, executor: DrizzleExecutor = db): Promise<number> {
+  const [row] = await executor
     .select({ total: sum(expenseLines.amount) })
     .from(expenseLines)
     .where(and(eq(expenseLines.reportId, reportId), isNull(expenseLines.deletedAt)));
@@ -117,8 +144,6 @@ export interface CreateExpenseReportInput {
   title: string;
   description?: string | null;
   reportDate?: string;
-  totalAmount?: number;
-  netAmount?: number;
   currency?: string;
   projectId?: string | null;
   projectName?: string | null;
@@ -126,28 +151,21 @@ export interface CreateExpenseReportInput {
   tags?: string[] | null;
   submissionComment?: string | null;
   exchangeRate?: number | null;
-  baseCurrencyTotal?: number | null;
+  lineIds?: string[];
   customFields?: Record<string, string | number | boolean>;
 }
 
 export interface UpdateExpenseReportInput {
+  expectedVersion: number;
   title?: string;
-  description?: string;
-  status?: string;
+  description?: string | null;
   reportDate?: string;
-  totalAmount?: number;
-  netAmount?: number;
   currency?: string;
   projectId?: string | null;
   projectName?: string | null;
   clientName?: string | null;
   tags?: string[] | null;
   submissionComment?: string | null;
-  rejectionReason?: string | null;
-  paidAt?: string | null;
-  paidBy?: string | null;
-  exchangeRate?: number | null;
-  baseCurrencyTotal?: number | null;
   customFields?: Record<string, string | number | boolean>;
 }
 
@@ -163,37 +181,80 @@ export async function createExpenseReport(
       .where(eq(expenseReports.clientId, input.clientId))
       .limit(1);
     if (existing) {
+      if (existing.userId !== userId) {
+        throw new ConflictError('Client ID is already in use');
+      }
       const customFieldsByReport = await getCustomFieldsForReports([existing.id]);
-      return { ...existing, customFields: customFieldsByReport.get(existing.id) ?? {} };
+      const total = await computeTotal(existing.id);
+      return { ...toResponse(existing, total), customFields: customFieldsByReport.get(existing.id) ?? {} };
     }
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const [result] = await db
-    .insert(expenseReports)
-    .values({
-      userId,
-      clientId: input.clientId ?? null,
-      title: input.title,
-      description: input.description ?? null,
-      reportDate: input.reportDate ?? today,
-      totalAmount: 0,
-      netAmount: 0,
-      currency: input.currency ?? 'USD',
-      projectId: input.projectId ?? null,
-      projectName: input.projectName ?? null,
-      clientName: input.clientName ?? null,
-      tags: input.tags ?? null,
-      submissionComment: input.submissionComment ?? null,
-      exchangeRate: input.exchangeRate ?? 1.0,
-      baseCurrencyTotal: input.baseCurrencyTotal ?? null,
-    })
-    .returning();
+  const { report, computedTotal } = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(expenseReports)
+      .values({
+        userId,
+        clientId: input.clientId ?? null,
+        title: input.title,
+        description: input.description ?? null,
+        reportDate: input.reportDate ?? today,
+        totalAmount: 0,
+        netAmount: 0,
+        currency: input.currency ?? 'USD',
+        projectId: input.projectId ?? null,
+        projectName: input.projectName ?? null,
+        clientName: input.clientName ?? null,
+        tags: input.tags ?? null,
+        submissionComment: input.submissionComment ?? null,
+        exchangeRate: input.exchangeRate ?? 1.0,
+        baseCurrencyTotal: null,
+      })
+      .returning();
 
-  if (input.customFields) {
-    await setExpenseReportCustomFields(result.id, input.customFields);
-  }
-  return { ...toResponse(result, 0), customFields: input.customFields ?? {} };
+    if (input.customFields) {
+      await setExpenseReportCustomFields(tx, created.id, input.customFields);
+    }
+
+    const lineIds = [...new Set(input.lineIds ?? [])];
+    if (lineIds.length > 0) {
+      const ownedLines = await tx
+        .select({ id: expenseLines.id })
+        .from(expenseLines)
+        .where(and(
+          eq(expenseLines.userId, userId),
+          isNull(expenseLines.reportId),
+          isNull(expenseLines.deletedAt),
+          inArray(expenseLines.id, lineIds)
+        ))
+        .for('update');
+      const foundIds = new Set(ownedLines.map((line) => line.id));
+      const missingIds = lineIds.filter((id) => !foundIds.has(id));
+      if (missingIds.length > 0) {
+        throw new ForbiddenError(`Lines not found or already attached: ${missingIds.join(', ')}`);
+      }
+
+      await tx
+        .update(expenseLines)
+        .set({ reportId: created.id, updatedAt: sql`NOW()`, version: sql`version + 1` })
+        .where(inArray(expenseLines.id, lineIds));
+    }
+
+    const total = await computeTotal(created.id, tx);
+    const [withTotals] = await tx
+      .update(expenseReports)
+      .set({
+        totalAmount: total,
+        netAmount: total,
+        baseCurrencyTotal: total * Number(created.exchangeRate ?? 1),
+      })
+      .where(eq(expenseReports.id, created.id))
+      .returning();
+    return { report: withTotals, computedTotal: total };
+  });
+
+  return { ...toResponse(report, computedTotal), customFields: input.customFields ?? {} };
 }
 
 export async function getExpenseReportById(
@@ -204,7 +265,7 @@ export async function getExpenseReportById(
   const [report] = await db
     .select()
     .from(expenseReports)
-    .where(eq(expenseReports.id, reportId))
+    .where(and(eq(expenseReports.id, reportId), isNull(expenseReports.deletedAt)))
     .limit(1);
 
   if (!report) {
@@ -389,44 +450,68 @@ export async function updateExpenseReport(
   input: UpdateExpenseReportInput,
   permissions_: string[] = []
 ): Promise<ExpenseReportWithCustomFields> {
-  await getExpenseReportById(reportId, userId, permissions_);
+  const accessibleReport = await getExpenseReportById(reportId, userId, permissions_);
+  const permissionSet = new Set(permissions_);
+  if (accessibleReport.userId === userId) {
+    if (permissions_.length > 0 && !permissionSet.has('report.edit.own') && !permissionSet.has('report.edit.all')) {
+      throw new ForbiddenError('Editing this report requires report.edit.own');
+    }
+  } else if (!permissionSet.has('report.edit.all')) {
+    if (!permissionSet.has('report.edit.team')) {
+      throw new ForbiddenError('Editing another user\'s report requires report.edit.team or report.edit.all');
+    }
+    const teamAccess = await canAccessReport(userId, reportId, [
+      ...permissions_,
+      'report.view.team',
+    ]);
+    if (!teamAccess.allowed) throw new ForbiddenError('Report is outside the caller\'s editable team scope');
+  }
 
   const updates: Partial<typeof expenseReports.$inferInsert> = {};
   if (input.title !== undefined) updates.title = input.title;
   if (input.description !== undefined) updates.description = input.description;
-  if (input.status !== undefined) updates.status = input.status;
   if (input.reportDate !== undefined) updates.reportDate = input.reportDate;
-  if (input.totalAmount !== undefined) updates.totalAmount = input.totalAmount;
-  if (input.netAmount !== undefined) updates.netAmount = input.netAmount;
   if (input.currency !== undefined) updates.currency = input.currency;
   if (input.projectId !== undefined) updates.projectId = input.projectId;
   if (input.projectName !== undefined) updates.projectName = input.projectName;
   if (input.clientName !== undefined) updates.clientName = input.clientName;
   if (input.tags !== undefined) updates.tags = input.tags;
   if (input.submissionComment !== undefined) updates.submissionComment = input.submissionComment;
-  if (input.rejectionReason !== undefined) updates.rejectionReason = input.rejectionReason;
-  if (input.paidAt !== undefined) updates.paidAt = input.paidAt;
-  if (input.paidBy !== undefined) updates.paidBy = input.paidBy;
-  if (input.exchangeRate !== undefined) updates.exchangeRate = input.exchangeRate;
-  if (input.baseCurrencyTotal !== undefined) updates.baseCurrencyTotal = input.baseCurrencyTotal;
 
-  if (input.customFields !== undefined) {
-    await setExpenseReportCustomFields(reportId, input.customFields);
-  }
+  const result = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(expenseReports)
+      .where(and(eq(expenseReports.id, reportId), isNull(expenseReports.deletedAt)))
+      .for('update')
+      .limit(1);
+    if (!locked) throw new NotFoundError('Expense report');
 
-  if (Object.keys(updates).length === 0) {
-    return getExpenseReportById(reportId, userId, permissions_);
-  }
+    assertExpectedVersion(locked.version, input.expectedVersion);
+    assertReportTransition('edit', locked.status ?? 'unknown');
 
-  const [[result], computedTotal] = await Promise.all([
-    db
+    if (Object.keys(updates).length === 0 && input.customFields === undefined) {
+      return locked;
+    }
+
+    const [updated] = await tx
       .update(expenseReports)
-      .set({ ...updates, version: sql`version + 1` })
-      .where(eq(expenseReports.id, reportId))
-      .returning(),
-    computeTotal(reportId),
-  ]);
+      .set({ ...updates, version: sql`version + 1`, updatedAt: sql`NOW()` })
+      .where(and(
+        eq(expenseReports.id, reportId),
+        eq(expenseReports.version, input.expectedVersion),
+        isNull(expenseReports.deletedAt)
+      ))
+      .returning();
+    if (!updated) throw new ConflictError('Report was modified by another request');
 
+    if (input.customFields !== undefined) {
+      await setExpenseReportCustomFields(tx, reportId, input.customFields);
+    }
+    return updated;
+  });
+
+  const computedTotal = await computeTotal(reportId);
   const customFieldsByReport = await getCustomFieldsForReports([result.id]);
   return { ...toResponse(result, computedTotal), customFields: customFieldsByReport.get(result.id) ?? {} };
 }
@@ -434,11 +519,30 @@ export async function updateExpenseReport(
 export async function deleteExpenseReport(
   reportId: string,
   userId: string,
+  expectedVersion: number,
   permissions_: string[] = []
 ): Promise<void> {
-  await getExpenseReportById(reportId, userId, permissions_);
+  const accessibleReport = await getExpenseReportById(reportId, userId, permissions_);
+  const permissionSet = new Set(permissions_);
+  if (accessibleReport.userId === userId) {
+    if (permissions_.length > 0 && !permissionSet.has('report.delete.own') && !permissionSet.has('report.delete.all')) {
+      throw new ForbiddenError('Deleting this report requires report.delete.own');
+    }
+  } else if (!permissionSet.has('report.delete.all')) {
+    throw new ForbiddenError('Deleting another user\'s report requires report.delete.all');
+  }
 
   await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(expenseReports)
+      .where(and(eq(expenseReports.id, reportId), isNull(expenseReports.deletedAt)))
+      .for('update')
+      .limit(1);
+    if (!locked) throw new NotFoundError('Expense report');
+    assertExpectedVersion(locked.version, expectedVersion);
+    assertReportTransition('edit', locked.status);
+
     await tx
       .update(expenseReports)
       .set({
@@ -446,7 +550,7 @@ export async function deleteExpenseReport(
         updatedAt: sql`NOW()`,
         version: sql`version + 1`,
       })
-      .where(eq(expenseReports.id, reportId));
+      .where(and(eq(expenseReports.id, reportId), eq(expenseReports.version, expectedVersion)));
 
     // Cascade: a deleted report's lines would otherwise be orphaned —
     // still live and editable, but unreachable since they're only ever

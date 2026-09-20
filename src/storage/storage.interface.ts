@@ -1,6 +1,7 @@
 export interface PresignedUrlOptions {
   expiresIn?: number; // seconds
   contentType?: string;
+  contentLength?: number;
 }
 
 export interface PresignedUploadUrl {

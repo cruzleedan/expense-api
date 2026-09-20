@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@hono/zod-openapi';
 
 // Workflow step schema
 export const WorkflowStepSchema = z.object({
@@ -25,7 +25,47 @@ export const WorkflowStepSchema = z.object({
     notifyAtHours: z.array(z.number()),
     autoApproveAfterHours: z.number().nullable().optional(),
   }).optional(),
-}).openapi('WorkflowStep');
+}).strict().openapi('WorkflowStep').superRefine((step, ctx) => {
+  if (step.targetType === 'hybrid' && typeof step.targetValue === 'string') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetValue'],
+      message: 'Hybrid targets require both role and relationship values',
+    });
+  }
+  if (step.targetType !== 'hybrid' && typeof step.targetValue !== 'string') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetValue'],
+      message: `${step.targetType} targets require a string value`,
+    });
+  }
+  if (
+    step.targetType === 'relationship'
+    && typeof step.targetValue === 'string'
+    && !['direct_manager', 'manager', 'manager_chain', 'department_head'].includes(step.targetValue)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetValue'],
+      message: 'Unsupported relationship target',
+    });
+  }
+});
+
+const WorkflowStepsInputSchema = z.array(WorkflowStepSchema).min(1).superRefine((steps, ctx) => {
+  const seen = new Set<number>();
+  for (const [index, step] of steps.entries()) {
+    if (seen.has(step.stepNumber)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [index, 'stepNumber'],
+        message: 'Workflow step numbers must be unique',
+      });
+    }
+    seen.add(step.stepNumber);
+  }
+});
 
 // Workflow conditions schema
 export const WorkflowConditionsSchema = z.object({
@@ -55,23 +95,25 @@ export const CreateWorkflowRequestSchema = z.object({
   name: z.string().min(2).max(255),
   description: z.string().max(1000).optional(),
   conditions: WorkflowConditionsSchema.optional(),
-  steps: z.array(WorkflowStepSchema).min(1),
+  steps: WorkflowStepsInputSchema,
   onReturnPolicy: z.enum(['hard_restart', 'soft_restart']).default('hard_restart'),
-}).openapi('CreateWorkflowRequest');
+}).strict().openapi('CreateWorkflowRequest');
 
 export const UpdateWorkflowRequestSchema = z.object({
   description: z.string().max(1000).optional(),
   conditions: WorkflowConditionsSchema.optional(),
-  steps: z.array(WorkflowStepSchema).optional(),
+  steps: WorkflowStepsInputSchema.optional(),
   onReturnPolicy: z.enum(['hard_restart', 'soft_restart']).optional(),
-}).openapi('UpdateWorkflowRequest');
+}).strict().openapi('UpdateWorkflowRequest');
 
 // Approval action schemas
 export const ApproveRequestSchema = z.object({
+  expectedVersion: z.number().int().positive(),
   comment: z.string().max(1000).optional(),
 }).openapi('ApproveRequest');
 
 export const RejectRequestSchema = z.object({
+  expectedVersion: z.number().int().positive(),
   comment: z.string().min(10).max(1000),
   rejectionCategory: z.enum([
     'missing_receipt',
@@ -84,8 +126,25 @@ export const RejectRequestSchema = z.object({
 }).openapi('RejectRequest');
 
 export const ReturnRequestSchema = z.object({
+  expectedVersion: z.number().int().positive(),
   comment: z.string().min(10).max(1000),
 }).openapi('ReturnRequest');
+
+export const VersionedCommandRequestSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+}).strict().openapi('VersionedCommandRequest');
+
+export const PostReportRequestSchema = VersionedCommandRequestSchema.extend({
+  postingReference: z.string().trim().min(1).max(255),
+}).strict().openapi('PostReportRequest');
+
+export const PayReportRequestSchema = VersionedCommandRequestSchema.extend({
+  paymentReference: z.string().trim().min(1).max(255),
+}).strict().openapi('PayReportRequest');
+
+export const CorrectApprovedReportRequestSchema = VersionedCommandRequestSchema.extend({
+  reason: z.string().trim().min(10).max(1000),
+}).strict().openapi('CorrectApprovedReportRequest');
 
 // Approval history schema
 export const ApprovalHistorySchema = z.object({

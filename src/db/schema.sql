@@ -128,8 +128,29 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     user_agent TEXT,
     revoked_at TIMESTAMP WITH TIME ZONE,
     last_used_at TIMESTAMP WITH TIME ZONE,
+    step_up_verified_at TIMESTAMP WITH TIME ZONE,
+    family_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    auth_version INTEGER NOT NULL DEFAULT 1 CHECK (auth_version > 0),
+    family_created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    rotated_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_hash_unique ON refresh_tokens(token_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_active_family ON refresh_tokens(family_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_family ON refresh_tokens(user_id, family_id);
+
+CREATE TABLE IF NOT EXISTS user_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(50) NOT NULL CHECK (provider IN ('google', 'facebook')),
+    subject VARCHAR(255) NOT NULL CHECK (length(btrim(subject)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT user_identities_provider_subject_unique UNIQUE(provider, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(user_id);
 
 -- ============================================================================
 -- RBAC TABLES
@@ -153,7 +174,7 @@ CREATE TABLE IF NOT EXISTS permissions (
     description TEXT,
     category VARCHAR(100),  -- e.g., 'report', 'role', 'user', 'workflow', 'audit'
     risk_level VARCHAR(20) CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
-    requires_mfa BOOLEAN DEFAULT false,
+    requires_mfa BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -349,7 +370,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted', 'paid')),
+    status VARCHAR(50) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending', 'approved', 'rejected', 'returned', 'posted', 'paid')),
     -- Organizational context
     department_id UUID REFERENCES departments(id),
     department_name VARCHAR(255),  -- Denormalized
@@ -379,8 +400,11 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     submitted_at TIMESTAMP WITH TIME ZONE,
     approved_at TIMESTAMP WITH TIME ZONE,
     posted_at TIMESTAMP WITH TIME ZONE,
+    posted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    posting_reference VARCHAR(255),
     paid_at TIMESTAMP WITH TIME ZONE,
     paid_by VARCHAR(255),
+    payment_reference VARCHAR(255),
     exchange_rate DECIMAL(10,6) DEFAULT 1.0,
     base_currency_total DECIMAL(12,2),
     submission_comment TEXT,
@@ -399,6 +423,41 @@ CREATE TABLE IF NOT EXISTS expense_reports (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP WITH TIME ZONE  -- NULL = active; set for soft deletes
 );
+
+-- Additive upgrade path for databases created before WORK-0032.
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS posted_by UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS posting_reference VARCHAR(255);
+ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(255);
+ALTER TABLE expense_reports ALTER COLUMN status SET NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_reports_posting_reference
+    ON expense_reports(posting_reference) WHERE posting_reference IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_reports_payment_reference
+    ON expense_reports(payment_reference) WHERE payment_reference IS NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_nonnegative_totals') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_nonnegative_totals
+            CHECK (total_amount >= 0 AND net_amount >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_submission_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_submission_timestamp_state
+            CHECK (status IN ('draft') OR submitted_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_approval_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_approval_timestamp_state
+            CHECK (status NOT IN ('approved', 'posted', 'paid') OR approved_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_posting_timestamp_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_posting_timestamp_state
+            CHECK (status NOT IN ('posted', 'paid') OR posted_at IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expense_reports_payment_state') THEN
+        ALTER TABLE expense_reports ADD CONSTRAINT expense_reports_payment_state
+            CHECK (status <> 'paid' OR (paid_at IS NOT NULL AND paid_by IS NOT NULL AND payment_reference IS NOT NULL)) NOT VALID;
+    END IF;
+END $$;
 
 -- WORK-0015: same shape/reasoning as expense_line_field_values above, keyed
 -- on expense_report_id instead. Two tables, not one polymorphic table — see
@@ -569,6 +628,26 @@ CREATE TABLE IF NOT EXISTS receipts (
     ) STORED,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- One-time server-owned capabilities for direct-to-object-storage uploads.
+-- The storage key is opaque and bound to the requesting user and metadata;
+-- confirmation never trusts client-supplied file attributes.
+CREATE TABLE IF NOT EXISTS pending_receipt_uploads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    storage_key VARCHAR(500) NOT NULL UNIQUE,
+    line_id UUID REFERENCES expense_lines(id) ON DELETE SET NULL,
+    file_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    expected_size INTEGER NOT NULL CHECK (expected_size > 0),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_receipt_uploads_owner_expiry
+    ON pending_receipt_uploads(user_id, expires_at);
 
 -- Many-to-many: receipts <-> expense_lines
 CREATE TABLE IF NOT EXISTS receipt_line_associations (
@@ -1543,10 +1622,12 @@ INSERT INTO permissions (name, description, category, risk_level) VALUES
 ('report.approve', 'Approve reports at current workflow step', 'report', 'high'),
 ('report.reject', 'Reject reports permanently', 'report', 'high'),
 ('report.return', 'Return reports for correction', 'report', 'medium'),
+('report.correct', 'Reopen an approved but unposted report for correction', 'report', 'high'),
 ('report.reassign', 'Reassign approver for a report', 'report', 'medium'),
 ('report.force_approve', 'Approve report bypassing workflow', 'report', 'critical'),
 -- Report Management - Financial Operations
 ('report.post', 'Post approved reports to accounting system', 'report', 'high'),
+('report.pay', 'Record payment of posted expense reports', 'report', 'high'),
 ('report.unpost', 'Reverse a posted report', 'report', 'critical'),
 ('report.export', 'Export report data', 'report', 'medium'),
 ('report.export.financial', 'Export financial data including sensitive info', 'report', 'high'),
@@ -1694,6 +1775,24 @@ WHERE r.name = 'employee' AND p.name IN (
 )
 ON CONFLICT DO NOTHING;
 
+-- Critical capabilities always require a recent, server-side step-up ceremony.
+UPDATE permissions SET requires_mfa = true WHERE risk_level = 'critical';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'permissions_critical_requires_mfa'
+          AND conrelid = 'permissions'::regclass
+    ) THEN
+        ALTER TABLE permissions
+            ADD CONSTRAINT permissions_critical_requires_mfa
+            CHECK (risk_level IS DISTINCT FROM 'critical' OR requires_mfa);
+    END IF;
+END
+$$;
+
 -- Approver role permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
@@ -1717,7 +1816,7 @@ ON CONFLICT DO NOTHING;
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
 WHERE r.name = 'finance' AND p.name IN (
-    'report.view.all', 'report.post', 'report.export', 'report.export.financial',
+    'report.view.all', 'report.post', 'report.pay', 'report.correct', 'report.export', 'report.export.financial',
     'attachment.view.all', 'attachment.download',
     'audit.view',
     'analytics.view', 'analytics.export',
@@ -1755,18 +1854,33 @@ WHERE r.name = 'auditor' AND p.name IN (
 )
 ON CONFLICT DO NOTHING;
 
--- Admin role permissions (most permissions except critical ones)
--- Note: this is a denylist, not an allowlist — new permissions (e.g.
--- form.view/form.manage/form.publish, WORK-0010) flow to 'admin'
--- automatically unless added to the NOT IN list below, and to
--- 'super_admin' automatically via the catch-all below that. No explicit
--- grant was needed for the form designer permissions.
+-- WORK-0047: explicit administrator catalog; never grant new capabilities implicitly.
+-- Matches src/policies/roleCatalog.ts. Existing databases use the audited operator
+-- migration, not a replay of bootstrap DDL. Financial execution is intentionally absent.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p
-WHERE r.name = 'admin' AND p.name NOT IN (
-    'role.assign.admin', 'role.assign.finance',
-    'user.delete', 'user.impersonate',
-    'system.restore', 'workflow.override', 'report.force_approve'
+WHERE r.name = 'admin' AND p.name IN (
+    'report.view.all', 'report.view.archived', 'report.export',
+    'attachment.view.all', 'attachment.download',
+    'role.create', 'role.view', 'role.edit', 'role.delete', 'role.assign',
+    'permission.view', 'permission.create', 'permission.edit', 'permission.delete',
+    'user.create', 'user.view', 'user.view.sensitive', 'user.edit', 'user.edit.own',
+    'user.deactivate', 'user.reset_password', 'user.unlock',
+    'workflow.create', 'workflow.view', 'workflow.edit', 'workflow.delete',
+    'workflow.assign', 'workflow.test', 'workflow.migrate',
+    'system.configure', 'system.view_logs', 'system.backup', 'system.integrate',
+    'system.api_keys', 'system.notification', 'system.maintenance',
+    'category.create', 'category.view', 'category.edit', 'category.delete',
+    'project.create', 'project.view', 'project.view.all', 'project.edit', 'project.delete',
+    'policy.view', 'policy.create', 'policy.edit', 'policy.delete', 'policy.check',
+    'form.view', 'form.manage', 'form.publish',
+    'audit.view', 'audit.view.all', 'audit.export', 'audit.analyze', 'compliance.view',
+    'analytics.view', 'analytics.view.sensitive', 'analytics.export', 'analytics.create',
+    'llm.query', 'llm.query.all', 'llm.insights.view', 'llm.anomaly.view',
+    'llm.history.view', 'llm.history.view.all', 'llm.semantic_search',
+    'llm.trends.view', 'llm.trends.view.all', 'llm.forecast', 'llm.budget.view',
+    'llm.policy.check', 'llm.project.query', 'llm.project.query.all',
+    'llm.template.view', 'llm.template.create', 'llm.template.edit', 'llm.template.delete'
 )
 ON CONFLICT DO NOTHING;
 

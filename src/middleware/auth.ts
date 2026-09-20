@@ -1,11 +1,11 @@
 import type { MiddlewareHandler, Context } from 'hono';
 import { verifyAccessToken } from '../services/auth.service.js';
 import { UnauthorizedError } from '../types/index.js';
-import type { JwtPayload } from '../types/index.js';
+import type { JwtPayloadV3 } from '../types/index.js';
 
 declare module 'hono' {
   interface ContextVariableMap {
-    user: JwtPayload;
+    user: JwtPayloadV3;
     userId: string;
   }
 }
@@ -30,7 +30,7 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
 };
 
-export function getUser(c: Context): JwtPayload {
+export function getUser(c: Context): JwtPayloadV3 {
   const user = c.get('user');
   if (!user) {
     throw new UnauthorizedError('User not authenticated');

@@ -1,9 +1,9 @@
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { randomUUID } from 'crypto';
 import type { StorageProvider } from './storage.interface.js';
 import { env } from '../config/env.js';
-import { NotFoundError } from '../types/index.js';
+import { NotFoundError, ValidationError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { S3StorageProvider } from './s3Storage.js';
 
@@ -22,10 +22,11 @@ export class LocalStorageProvider implements StorageProvider {
     const uniqueId = randomUUID();
     const safeFilename = this.sanitizeFilename(filename);
     const relativePath = join(year, month, `${uniqueId}-${safeFilename}`);
-    const fullPath = join(this.baseDir, relativePath);
+    const { basePath, candidatePath: fullPath } = await this.resolveContainedPath(relativePath, false);
 
     // Ensure directory exists
     await fs.mkdir(dirname(fullPath), { recursive: true });
+    await this.assertRealPathContained(basePath, await fs.realpath(dirname(fullPath)));
 
     // Write file
     await fs.writeFile(fullPath, file);
@@ -35,9 +36,8 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async get(path: string): Promise<Buffer> {
-    const fullPath = join(this.baseDir, path);
-
     try {
+      const { candidatePath: fullPath } = await this.resolveContainedPath(path, true);
       return await fs.readFile(fullPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -48,9 +48,8 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async delete(path: string): Promise<void> {
-    const fullPath = join(this.baseDir, path);
-
     try {
+      const { candidatePath: fullPath } = await this.resolveContainedPath(path, true);
       await fs.unlink(fullPath);
       logger.debug('File deleted from local storage', { path });
     } catch (error) {
@@ -62,12 +61,13 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async exists(path: string): Promise<boolean> {
-    const fullPath = join(this.baseDir, path);
-
     try {
+      const { candidatePath: fullPath } = await this.resolveContainedPath(path, true);
       await fs.access(fullPath);
       return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       return false;
     }
   }
@@ -87,6 +87,43 @@ export class LocalStorageProvider implements StorageProvider {
       .replace(/[/\\]/g, '_')
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .substring(0, 100);
+  }
+
+  private async resolveContainedPath(
+    storagePath: string,
+    requireExisting: boolean
+  ): Promise<{ basePath: string; candidatePath: string }> {
+    if (!storagePath || storagePath.includes('\0') || isAbsolute(storagePath)) {
+      throw new ValidationError('Invalid storage path');
+    }
+
+    await fs.mkdir(this.baseDir, { recursive: true });
+    const basePath = await fs.realpath(resolve(this.baseDir));
+    const candidatePath = resolve(basePath, storagePath);
+    this.assertLexicallyContained(basePath, candidatePath);
+
+    if (requireExisting) {
+      const realCandidatePath = await fs.realpath(candidatePath);
+      this.assertRealPathContained(basePath, realCandidatePath);
+      return { basePath, candidatePath: realCandidatePath };
+    }
+
+    return { basePath, candidatePath };
+  }
+
+  private assertLexicallyContained(basePath: string, candidatePath: string): void {
+    const relativePath = relative(basePath, candidatePath);
+    if (
+      relativePath === '..' ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new ValidationError('Invalid storage path');
+    }
+  }
+
+  private assertRealPathContained(basePath: string, candidatePath: string): void {
+    this.assertLexicallyContained(basePath, candidatePath);
   }
 }
 

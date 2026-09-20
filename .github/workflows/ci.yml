@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 2 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: expense-api-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run verify:security
+      - name: Audit development tooling as well as production dependencies
+        run: npm audit --audit-level=high
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: expense_test
+          POSTGRES_PASSWORD: expense_test
+          POSTGRES_DB: expense_test_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U expense_test -d expense_test_control"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install reviewed SQL migration test client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - run: npm run test:postgres
+        env:
+          TEST_DATABASE_URL: postgresql://expense_test:expense_test@127.0.0.1:5432/expense_test_control
+
+  production-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build audited production image with embedded SBOM
+        run: docker build --target production -t expense-api-ci .
+      - name: Fresh production-image audit independent of Docker build cache
+        run: docker run --rm expense-api-ci npm audit --omit=dev --audit-level=high
+      - name: Verify SBOM against the actual pruned image
+        run: docker run --rm -v "${PWD}/scripts/verify-sbom.mjs:/app/verify-sbom.mjs:ro" expense-api-ci node verify-sbom.mjs
+      - name: Save actual production dependency SBOM
+        run: docker run --rm expense-api-ci node -e 'process.stdout.write(require("fs").readFileSync("/app/sbom.cdx.json"))' > sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-sbom
+          path: sbom.cdx.json
+          retention-days: 30

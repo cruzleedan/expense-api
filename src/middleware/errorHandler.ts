@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler, ErrorHandler } from 'hono';
-import { AppError } from '../types/index.js';
+import { AppError, ValidationError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { ZodError } from 'zod';
 
@@ -40,8 +40,11 @@ export function handleError(c: Context, error: unknown): Response {
         code: error.code,
       },
     };
+    if (error instanceof ValidationError && error.details !== undefined) {
+      response.error.details = error.details;
+    }
 
-    return c.json(response, error.statusCode as 400 | 401 | 403 | 404 | 409 | 500);
+    return c.json(response, error.statusCode as 400 | 401 | 403 | 404 | 409 | 413 | 500);
   }
 
   if (error instanceof ZodError) {

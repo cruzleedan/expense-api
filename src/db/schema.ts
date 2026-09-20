@@ -14,6 +14,8 @@ import {
   primaryKey,
   unique,
   uniqueIndex,
+  index,
+  check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
@@ -131,8 +133,32 @@ export const refreshTokens = pgTable('refresh_tokens', {
   userAgent: text(),
   revokedAt: timestamp({ withTimezone: true, mode: 'string' }),
   lastUsedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  stepUpVerifiedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  familyId: uuid().notNull().defaultRandom(),
+  authVersion: integer().notNull().default(1),
+  familyCreatedAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  rotatedAt: timestamp({ withTimezone: true, mode: 'string' }),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex('idx_refresh_tokens_hash_unique').on(table.tokenHash),
+  check('refresh_tokens_auth_version_check', sql`${table.authVersion} > 0`),
+  uniqueIndex('idx_refresh_tokens_active_family').on(table.familyId).where(sql`${table.revokedAt} IS NULL`),
+  index('idx_refresh_tokens_user_family').on(table.userId, table.familyId),
+]);
+
+export const userIdentities = pgTable('user_identities', {
+  id: uuid().primaryKey().defaultRandom(),
+  userId: uuid().notNull().references(() => users.id, { onDelete: 'cascade' }),
+  provider: varchar({ length: 50 }).notNull(),
+  subject: varchar({ length: 255 }).notNull(),
+  createdAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true, mode: 'string' }).notNull().defaultNow(),
+}, (table) => [
+  unique('user_identities_provider_subject_unique').on(table.provider, table.subject),
+  check('user_identities_provider_check', sql`${table.provider} IN ('google', 'facebook')`),
+  check('user_identities_subject_check', sql`length(btrim(${table.subject})) > 0`),
+  index('idx_user_identities_user').on(table.userId),
+]);
 
 // ============================================================================
 // RBAC
@@ -154,9 +180,14 @@ export const permissions = pgTable('permissions', {
   description: text(),
   category: varchar({ length: 100 }),
   riskLevel: varchar({ length: 20 }),
-  requiresMfa: boolean().default(false),
+  requiresMfa: boolean().notNull().default(false),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
+}, (t) => [
+  check(
+    'permissions_critical_requires_mfa',
+    sql`${t.riskLevel} IS DISTINCT FROM 'critical' OR ${t.requiresMfa}`
+  ),
+]);
 
 export const userRoles = pgTable(
   'user_roles',
@@ -322,7 +353,7 @@ export const expenseReports = pgTable('expense_reports', {
     .references(() => users.id, { onDelete: 'cascade' }),
   title: varchar({ length: 255 }).notNull(),
   description: text(),
-  status: varchar({ length: 50 }).default('draft'),
+  status: varchar({ length: 50 }).notNull().default('draft'),
   departmentId: uuid(),
   departmentName: varchar({ length: 255 }),
   costCenter: varchar({ length: 50 }),
@@ -345,8 +376,11 @@ export const expenseReports = pgTable('expense_reports', {
   submittedAt: timestamp({ withTimezone: true, mode: 'string' }),
   approvedAt: timestamp({ withTimezone: true, mode: 'string' }),
   postedAt: timestamp({ withTimezone: true, mode: 'string' }),
+  postedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+  postingReference: varchar({ length: 255 }),
   paidAt: timestamp({ withTimezone: true, mode: 'string' }),
   paidBy: varchar({ length: 255 }),
+  paymentReference: varchar({ length: 255 }),
   exchangeRate: num(10, 6).default(1.0),
   baseCurrencyTotal: num(12, 2),
   submissionComment: text(),
@@ -544,6 +578,29 @@ export const receipts = pgTable('receipts', {
   ),
   createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
+
+// A direct upload is only accepted when this server-owned capability is
+// presented by the same user before expiry. Client-supplied confirmation
+// metadata is never authoritative.
+export const pendingReceiptUploads = pgTable(
+  'pending_receipt_uploads',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull().references(() => users.id, { onDelete: 'cascade' }),
+    storageKey: varchar({ length: 500 }).notNull().unique(),
+    lineId: uuid().references(() => expenseLines.id, { onDelete: 'set null' }),
+    fileName: varchar({ length: 255 }).notNull(),
+    mimeType: varchar({ length: 100 }).notNull(),
+    expectedSize: integer().notNull(),
+    expiresAt: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+    consumedAt: timestamp({ withTimezone: true, mode: 'string' }),
+    createdAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('idx_pending_receipt_uploads_owner_expiry').on(t.userId, t.expiresAt),
+  ]
+);
 
 export const receiptLineAssociations = pgTable(
   'receipt_line_associations',

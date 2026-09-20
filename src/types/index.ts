@@ -35,9 +35,14 @@ export interface RefreshToken {
   user_agent: string | null;
   revoked_at: Date | null;
   last_used_at: Date | null;
+  step_up_verified_at: Date | null;
+  family_id: string;
+  auth_version: number;
+  family_created_at: Date;
+  rotated_at: Date | null;
 }
 
-export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted';
+export type ExpenseReportStatus = 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'returned' | 'posted' | 'paid';
 
 export interface ExpenseReport {
   id: string;
@@ -62,6 +67,11 @@ export interface ExpenseReport {
   submitted_at: Date | null;
   approved_at: Date | null;
   posted_at: Date | null;
+  posted_by: string | null;
+  posting_reference: string | null;
+  paid_at: Date | null;
+  paid_by: string | null;
+  payment_reference: string | null;
   version: number;
   client_id: string | null;
   created_at: Date;
@@ -224,10 +234,24 @@ export class ForbiddenError extends AppError {
   }
 }
 
+export class StepUpRequiredError extends AppError {
+  constructor(message = 'Recent step-up authentication is required') {
+    super(403, message, 'STEP_UP_REQUIRED');
+    this.name = 'StepUpRequiredError';
+  }
+}
+
 export class ConflictError extends AppError {
   constructor(message: string) {
     super(409, message, 'CONFLICT');
     this.name = 'ConflictError';
+  }
+}
+
+export class PayloadTooLargeError extends AppError {
+  constructor(message = 'Request payload is too large') {
+    super(413, message, 'PAYLOAD_TOO_LARGE');
+    this.name = 'PayloadTooLargeError';
   }
 }
 
@@ -296,6 +320,8 @@ export interface WorkflowStep {
   target_type: 'role' | 'relationship' | 'hybrid' | 'system';
   target_value: string | { role: string; relationship: string };
   sla_hours: number;
+  /** Point-in-time principals frozen into a submitted report's workflow snapshot. */
+  eligible_user_ids?: string[];
   required?: boolean;
   required_if?: WorkflowStepCondition;
   skip_if?: WorkflowStepCondition;
@@ -406,6 +432,7 @@ export interface AuditLog {
 
 // Enhanced JWT payload for v3.0
 export interface JwtPayloadV3 {
+  auth_version: number;
   jti: string;          // JWT ID (unique identifier)
   sub: string;          // User ID
   email: string;

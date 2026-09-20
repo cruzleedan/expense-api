@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { RouteHandler } from '@hono/zod-openapi';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
-import { requirePermission, getAuthUser } from '../middleware/permission.js';
+import { requireAnyPermission, requirePermission, getAuthUser } from '../middleware/permission.js';
 import {
   getAllWorkflows,
   getWorkflowById,
@@ -13,6 +13,9 @@ import {
   returnReport,
   withdrawReport,
   reviseReport,
+  correctApprovedReport,
+  postReport,
+  payReport,
   getReportWorkflowStatus,
 } from '../services/workflow.service.js';
 import { getPendingApprovalsForUser } from '../services/approval.service.js';
@@ -33,6 +36,10 @@ import {
   WorkflowIdParamSchema,
   ReportIdParamSchema,
   PendingApprovalsResponseSchema,
+  VersionedCommandRequestSchema,
+  PostReportRequestSchema,
+  PayReportRequestSchema,
+  CorrectApprovedReportRequestSchema,
 } from '../schemas/workflow.js';
 import { ErrorSchema } from '../schemas/common.js';
 
@@ -75,18 +82,20 @@ function mapConditions(c: WorkflowDefinition['conditions']) {
 
 // Map DB WorkflowDefinition to camelCase response shape
 function mapWorkflow(w: WorkflowDefinition) {
+  const isoDate = (value: Date | string | undefined): string =>
+    new Date(value ?? 0).toISOString();
   return {
     id: w.id,
     name: w.name,
-    description: w.description,
+    description: w.description ?? null,
     version: w.version,
-    isActive: w.is_active,
-    conditions: mapConditions(w.conditions),
+    isActive: w.is_active ?? true,
+    conditions: mapConditions(w.conditions ?? null),
     steps: w.steps.map(mapStep),
     onReturnPolicy: w.on_return_policy,
-    createdAt: w.created_at.toISOString(),
-    updatedAt: w.updated_at.toISOString(),
-    createdBy: w.created_by,
+    createdAt: isoDate(w.created_at),
+    updatedAt: isoDate(w.updated_at),
+    createdBy: w.created_by ?? null,
   };
 }
 
@@ -322,6 +331,9 @@ const submitReportRoute = createRoute({
   middleware: [requirePermission('report.submit')] as const,
   request: {
     params: ReportIdParamSchema,
+    body: {
+      content: { 'application/json': { schema: VersionedCommandRequestSchema } },
+    },
   },
   responses: {
     200: {
@@ -345,9 +357,10 @@ const submitReportRoute = createRoute({
 
 const submitReportHandler: RouteHandler<typeof submitReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
+  const { expectedVersion } = c.req.valid('json');
   const userId = getUserId(c);
 
-  const result = await submitReport(reportId, userId);
+  const result = await submitReport(reportId, userId, expectedVersion);
 
   return c.json({
     success: result.success,
@@ -390,10 +403,10 @@ const approveReportRoute = createRoute({
 
 const approveReportHandler: RouteHandler<typeof approveReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
-  const { comment } = c.req.valid('json');
+  const { comment, expectedVersion } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
-  const result = await approveReport(reportId, authUser.id, authUser.email, comment);
+  const result = await approveReport(reportId, authUser.id, authUser.email, expectedVersion, comment);
 
   return c.json({
     success: result.success,
@@ -436,10 +449,10 @@ const rejectReportRoute = createRoute({
 
 const rejectReportHandler: RouteHandler<typeof rejectReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
-  const { comment, rejectionCategory } = c.req.valid('json');
+  const { comment, rejectionCategory, expectedVersion } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
-  const result = await rejectReport(reportId, authUser.id, authUser.email, comment, rejectionCategory);
+  const result = await rejectReport(reportId, authUser.id, authUser.email, expectedVersion, comment, rejectionCategory);
 
   return c.json({ success: result.success } as any, 200);
 };
@@ -478,10 +491,10 @@ const returnReportRoute = createRoute({
 
 const returnReportHandler: RouteHandler<typeof returnReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
-  const { comment } = c.req.valid('json');
+  const { comment, expectedVersion } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
-  const result = await returnReport(reportId, authUser.id, authUser.email, comment);
+  const result = await returnReport(reportId, authUser.id, authUser.email, expectedVersion, comment);
 
   return c.json({ success: result.success } as any, 200);
 };
@@ -498,6 +511,9 @@ const withdrawReportRoute = createRoute({
   middleware: [requirePermission('report.withdraw')] as const,
   request: {
     params: ReportIdParamSchema,
+    body: {
+      content: { 'application/json': { schema: VersionedCommandRequestSchema } },
+    },
   },
   responses: {
     200: {
@@ -517,9 +533,10 @@ const withdrawReportRoute = createRoute({
 
 const withdrawReportHandler: RouteHandler<typeof withdrawReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
+  const { expectedVersion } = c.req.valid('json');
   const userId = getUserId(c);
 
-  const result = await withdrawReport(reportId, userId);
+  const result = await withdrawReport(reportId, userId, expectedVersion);
 
   return c.json({ success: result.success } as any, 200);
 };
@@ -536,6 +553,9 @@ const reviseReportRoute = createRoute({
   middleware: [requirePermission('report.submit')] as const,
   request: {
     params: ReportIdParamSchema,
+    body: {
+      content: { 'application/json': { schema: VersionedCommandRequestSchema } },
+    },
   },
   responses: {
     200: {
@@ -559,13 +579,101 @@ const reviseReportRoute = createRoute({
 
 const reviseReportHandler: RouteHandler<typeof reviseReportRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
+  const { expectedVersion } = c.req.valid('json');
   const authUser = getAuthUser(c);
 
-  const result = await reviseReport(reportId, authUser.id, authUser.email);
+  const result = await reviseReport(reportId, authUser.id, authUser.email, expectedVersion);
 
   return c.json({ success: result.success } as any, 200);
 };
 workflowRouter.openapi(reviseReportRoute, reviseReportHandler);
+
+const correctApprovedReportRoute = createRoute({
+  method: 'post',
+  path: '/reports/{reportId}/correct',
+  tags: ['Report Workflow'],
+  summary: 'Reopen an approved report for correction',
+  description: 'Return an approved but unposted report to its owner with an immutable reason',
+  security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.correct')] as const,
+  request: {
+    params: ReportIdParamSchema,
+    body: { content: { 'application/json': { schema: CorrectApprovedReportRequestSchema } } },
+  },
+  responses: {
+    200: { description: 'Report reopened', content: { 'application/json': { schema: ActionResponseSchema } } },
+    403: { description: 'Forbidden by permission or separation of duties', content: { 'application/json': { schema: ErrorSchema } } },
+    404: { description: 'Report not found', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Invalid state or stale version', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const correctApprovedReportHandler: RouteHandler<typeof correctApprovedReportRoute> = async (c) => {
+  const { reportId } = c.req.valid('param');
+  const { expectedVersion, reason } = c.req.valid('json');
+  const actor = getAuthUser(c);
+  const result = await correctApprovedReport(reportId, actor.id, actor.email, expectedVersion, reason);
+  return c.json({ success: result.success } as any, 200);
+};
+workflowRouter.openapi(correctApprovedReportRoute, correctApprovedReportHandler);
+
+const postReportRoute = createRoute({
+  method: 'post',
+  path: '/reports/{reportId}/post',
+  tags: ['Report Workflow'],
+  summary: 'Post an approved report',
+  description: 'Post an approved report to accounting using a unique batch reference',
+  security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.post')] as const,
+  request: {
+    params: ReportIdParamSchema,
+    body: { content: { 'application/json': { schema: PostReportRequestSchema } } },
+  },
+  responses: {
+    200: { description: 'Report posted', content: { 'application/json': { schema: ActionResponseSchema } } },
+    403: { description: 'Forbidden by permission or separation of duties', content: { 'application/json': { schema: ErrorSchema } } },
+    404: { description: 'Report not found', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Invalid state, stale version, or duplicate reference', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const postReportHandler: RouteHandler<typeof postReportRoute> = async (c) => {
+  const { reportId } = c.req.valid('param');
+  const { expectedVersion, postingReference } = c.req.valid('json');
+  const actor = getAuthUser(c);
+  const result = await postReport(reportId, actor.id, expectedVersion, postingReference);
+  return c.json({ success: result.success } as any, 200);
+};
+workflowRouter.openapi(postReportRoute, postReportHandler);
+
+const payReportRoute = createRoute({
+  method: 'post',
+  path: '/reports/{reportId}/pay',
+  tags: ['Report Workflow'],
+  summary: 'Record payment of a posted report',
+  description: 'Settle a posted report using a unique payment reference; the poster cannot also pay it',
+  security: [{ bearerAuth: [] }],
+  middleware: [requirePermission('report.pay')] as const,
+  request: {
+    params: ReportIdParamSchema,
+    body: { content: { 'application/json': { schema: PayReportRequestSchema } } },
+  },
+  responses: {
+    200: { description: 'Report paid', content: { 'application/json': { schema: ActionResponseSchema } } },
+    403: { description: 'Forbidden by permission or separation of duties', content: { 'application/json': { schema: ErrorSchema } } },
+    404: { description: 'Report not found', content: { 'application/json': { schema: ErrorSchema } } },
+    409: { description: 'Invalid state, stale version, or duplicate reference', content: { 'application/json': { schema: ErrorSchema } } },
+  },
+});
+
+const payReportHandler: RouteHandler<typeof payReportRoute> = async (c) => {
+  const { reportId } = c.req.valid('param');
+  const { expectedVersion, paymentReference } = c.req.valid('json');
+  const actor = getAuthUser(c);
+  const result = await payReport(reportId, actor.id, expectedVersion, paymentReference);
+  return c.json({ success: result.success } as any, 200);
+};
+workflowRouter.openapi(payReportRoute, payReportHandler);
 
 // Get workflow status for a report
 const getReportStatusRoute = createRoute({
@@ -575,6 +683,12 @@ const getReportStatusRoute = createRoute({
   summary: 'Get report workflow status',
   description: 'Get the current workflow status and approval history for a report',
   security: [{ bearerAuth: [] }],
+  middleware: [requireAnyPermission(
+    'report.view.own',
+    'report.view.team',
+    'report.view.department',
+    'report.view.all'
+  )] as const,
   request: {
     params: ReportIdParamSchema,
   },
@@ -582,6 +696,10 @@ const getReportStatusRoute = createRoute({
     200: {
       description: 'Workflow status',
       content: { 'application/json': { schema: WorkflowStatusResponseSchema } },
+    },
+    403: {
+      description: 'Forbidden by report view scope',
+      content: { 'application/json': { schema: ErrorSchema } },
     },
     404: {
       description: 'Report not found',
@@ -592,8 +710,9 @@ const getReportStatusRoute = createRoute({
 
 const getReportStatusHandler: RouteHandler<typeof getReportStatusRoute> = async (c) => {
   const { reportId } = c.req.valid('param');
+  const authUser = getAuthUser(c);
 
-  const status = await getReportWorkflowStatus(reportId);
+  const status = await getReportWorkflowStatus(reportId, authUser.id, authUser.permissions);
 
   if (!status) {
     throw new NotFoundError('Expense report');
@@ -631,7 +750,7 @@ const getPendingApprovalsRoute = createRoute({
 
 const getPendingApprovalsHandler: RouteHandler<typeof getPendingApprovalsRoute> = async (c) => {
   const authUser = getAuthUser(c);
-  const approvals = await getPendingApprovalsForUser(authUser.id, authUser.roles);
+  const approvals = await getPendingApprovalsForUser(authUser.id);
 
   return c.json({
     approvals: approvals.map(a => ({

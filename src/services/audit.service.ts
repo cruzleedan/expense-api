@@ -26,6 +26,15 @@ const SENSITIVE_ACTIONS = [
   'emergency.override',
   'report.force_approve',
   'workflow.override',
+  'permission.create',
+  'permission.update',
+  'permission.delete',
+  'role.create',
+  'role.permissions.update',
+  'role.delete',
+  'user.role.assign',
+  'user.role.remove',
+  'user.roles.replace',
 ];
 
 /**
@@ -45,6 +54,7 @@ export async function logAuditEvent(params: {
   resourceVersion?: number;
   changes?: AuditLogChanges;
   metadata?: Record<string, unknown>;
+  client?: { query: typeof db.query };
 }): Promise<string> {
   const {
     actorId,
@@ -60,14 +70,16 @@ export async function logAuditEvent(params: {
     resourceVersion,
     changes,
     metadata,
+    client,
   } = params;
+  const queryFn: typeof db.query = client ? client.query.bind(client) : db.query.bind(db);
 
   // Generate event ID
   const eventId = crypto.randomUUID();
   const timestamp = new Date();
 
   // Get previous event for chain hash
-  const previousEventResult = await db.query<{ event_id: string; chain_hash: string }>(
+  const previousEventResult = await queryFn<{ event_id: string; chain_hash: string }>(
     `SELECT event_id, chain_hash FROM audit_logs
      ORDER BY timestamp DESC
      LIMIT 1`
@@ -115,7 +127,7 @@ export async function logAuditEvent(params: {
   let finalActorRoles = actorRoles;
 
   if (actorId && (!finalActorEmail || !finalActorRoles)) {
-    const actorResult = await db.query<{ email: string }>(
+    const actorResult = await queryFn<{ email: string }>(
       `SELECT email FROM users WHERE id = $1`,
       [actorId]
     );
@@ -124,7 +136,7 @@ export async function logAuditEvent(params: {
     }
 
     if (!finalActorRoles) {
-      const rolesResult = await db.query<{ name: string }>(
+      const rolesResult = await queryFn<{ name: string }>(
         `SELECT r.name FROM roles r
          JOIN user_roles ur ON r.id = ur.role_id
          WHERE ur.user_id = $1`,
@@ -135,7 +147,7 @@ export async function logAuditEvent(params: {
   }
 
   // Insert audit log
-  await db.query(
+  await queryFn(
     `INSERT INTO audit_logs (
        event_id, timestamp, actor_id, actor_email, actor_roles,
        ip_address, user_agent, session_id,
