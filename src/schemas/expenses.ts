@@ -9,8 +9,8 @@ export const ExpenseItemSchema = z.discriminatedUnion('type', [
 ]).openapi('ExpenseItem');
 
 export const ExpensesQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
   search: z.string().max(255).optional().openapi({
     example: 'flight',
     description: 'Search in report titles, expense line descriptions, and merchant names',

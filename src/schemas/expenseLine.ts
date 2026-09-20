@@ -138,8 +138,8 @@ export const UpdateExpenseLineSchema = z.object({
 export const ExpenseLineSortBySchema = z.enum(['description', 'amount', 'expenseDate', 'category', 'createdAt']);
 
 export const ExpenseLineListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
   search: z.string().max(255).optional().openapi({ example: 'flight', description: 'Search in description and category' }),
   sortBy: ExpenseLineSortBySchema.optional().openapi({ example: 'expenseDate', description: 'Field to sort by' }),
   sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),
@@ -156,8 +156,8 @@ export const ExpenseLineListResponseSchema = z.object({
 //  - List mode (updatedSince omitted): returns active (non-deleted) lines, with optional
 //    assignment filter / search / sort for UI listing.
 export const SyncExpenseLinesQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(500)).default('200').openapi({ example: '200' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(500)).prefault('200').openapi({ example: '200' }),
   updatedSince: z.string().datetime().optional().openapi({
     example: '2026-03-01T00:00:00.000Z',
     description: 'ISO 8601 timestamp. Returns only lines updated after this time, including deleted tombstones (sync mode).',

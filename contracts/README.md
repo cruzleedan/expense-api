@@ -18,3 +18,10 @@ logout, tighten refresh validation, and raise administrator/registration passwor
 minimum to 12. Token response transport is unchanged. Runtime cutover rejects old
 tokens and invalidates access on rotation/revocation; clients need sign-in recovery
 and single-flight refresh. See the [session/client procedure](../context/reference/auth-session-lifecycle.md).
+
+WORK-0051's coordinated Zod 4/Hono OpenAPI upgrade keeps HTTP request and response
+fields unchanged. The generated document flattens three versioned command
+models (`CorrectApprovedReportRequest`, `PostReportRequest`, `PayReportRequest`)
+from `allOf` into object schemas, adds `null` to five already-nullable enums,
+and emits existing query-parameter descriptions. Regenerate clients against the
+new baseline if their model generator is sensitive to those representations.

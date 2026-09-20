@@ -52,8 +52,8 @@ export const UpdateLlmPromptTemplateSchema = z.object({
 export const LlmPromptTemplateSortBySchema = z.enum(['name', 'outputFormat', 'version', 'createdAt', 'updatedAt']);
 
 export const LlmPromptTemplateListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20'),
   isActive: z.string().transform((v) => v === 'true').optional(),
   outputFormat: OutputFormatSchema.optional(),
   search: z.string().max(255).optional().openapi({ example: 'anomaly', description: 'Search in name, description' }),
@@ -68,7 +68,7 @@ export const LlmPromptTemplateListResponseSchema = z.object({
 
 // Template rendering schemas
 export const RenderTemplateRequestSchema = z.object({
-  context: z.record(z.unknown()).openapi({
+  context: z.record(z.string(), z.unknown()).openapi({
     example: {
       expense_description: 'Dinner at expensive restaurant',
       amount: 450,

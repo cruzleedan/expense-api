@@ -23,8 +23,8 @@ export const UserSchema = z.object({
   managerId: z.string().uuid().nullable(),
   costCenter: z.string().nullable(),
   // v5.0 fields
-  spendingProfile: z.record(z.unknown()).nullable(),
-  llmPreferences: z.record(z.unknown()).nullable(),
+  spendingProfile: z.record(z.string(), z.unknown()).nullable(),
+  llmPreferences: z.record(z.string(), z.unknown()).nullable(),
   lastLoginAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -44,8 +44,8 @@ export const CreateUserSchema = z.object({
   managerId: z.string().uuid().optional(),
   costCenter: z.string().max(50).optional(),
   // v5.0 fields
-  spendingProfile: z.record(z.unknown()).optional().openapi({ example: { avg_monthly: 1500, top_categories: ['Travel', 'Meals'] } }),
-  llmPreferences: z.record(z.unknown()).optional().openapi({ example: { default_currency: 'USD', dashboard_widgets: ['spending_trend'] } }),
+  spendingProfile: z.record(z.string(), z.unknown()).optional().openapi({ example: { avg_monthly: 1500, top_categories: ['Travel', 'Meals'] } }),
+  llmPreferences: z.record(z.string(), z.unknown()).optional().openapi({ example: { default_currency: 'USD', dashboard_widgets: ['spending_trend'] } }),
 }).openapi('CreateUser');
 
 export const UpdateUserSchema = z.object({
@@ -58,16 +58,16 @@ export const UpdateUserSchema = z.object({
   managerId: z.string().uuid().nullable().optional(),
   costCenter: z.string().max(50).nullable().optional(),
   // v5.0 fields
-  spendingProfile: z.record(z.unknown()).nullable().optional(),
-  llmPreferences: z.record(z.unknown()).nullable().optional(),
+  spendingProfile: z.record(z.string(), z.unknown()).nullable().optional(),
+  llmPreferences: z.record(z.string(), z.unknown()).nullable().optional(),
 }).openapi('UpdateUser');
 
 // Allowed sortBy values for users
 export const UserSortBySchema = z.enum(['email', 'username', 'firstName', 'lastName', 'createdAt', 'updatedAt', 'lastLoginAt']);
 
 export const UserListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20'),
   isActive: z.string().transform((v) => v === 'true').optional(),
   departmentId: z.string().uuid().optional(),
   search: z.string().max(255).optional().openapi({ example: 'john', description: 'Search in email, username, first name, last name' }),
