@@ -63,9 +63,9 @@ representation differences. No database change or deployment is in scope.
 
 - [x] Both packages are upgraded together and a clean Node 22 `npm ci` succeeds.
 - [x] Schema defaults and record parsing have focused regression tests.
-- [ ] `npm run check`, PostgreSQL integration suite, production-image/security/SBOM checks, and contract parity pass in CI.
+- [x] `npm run check`, PostgreSQL integration suite, production-image/security/SBOM checks, and contract parity pass in CI.
 - [x] The generated OpenAPI diff is reviewed, documented, and baselined.
-- [ ] A single integration PR replaces #23/#24; neither standalone failing PR is merged.
+- [x] A single integration PR replaces #23/#24; neither standalone failing PR is merged.
 
 ## Log
 
@@ -73,3 +73,4 @@ representation differences. No database change or deployment is in scope.
 - 2026-09-20 building — Began coordinated dependency, validation, and contract integration after the independent updates merged.
 - 2026-09-20 repository verification — Clean Node 22 install and `npm run check` passed in the verification image; the disposable PostgreSQL suite passed, and the production image passed a fresh zero-finding audit and actual-dependency SBOM parity. Awaiting PR CI on the final reviewed lockfile.
 - 2026-09-20 contract review — Reviewed the generated differences: three flattened command schemas retain required payload fields, five nullable enums redundantly include `null`, and existing query descriptions become visible. Updated the baseline and client-codegen note; no path/security/field removal was observed.
+- 2026-09-20 CI verification — PR #26 passed verification, isolated PostgreSQL, and production-image checks. Closed failing standalone PRs #23 and #24 and deleted their remote branches; awaiting integration merge. Deployment and live health were not requested or performed.
