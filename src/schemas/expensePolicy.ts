@@ -23,7 +23,7 @@ export const ExpensePolicySchema = z.object({
   appliesToDepartments: z.array(z.string().uuid()).nullable(),
   appliesToRoles: z.array(z.string()).nullable(),
   ruleType: RuleTypeSchema,
-  ruleConfig: z.record(z.unknown()),
+  ruleConfig: z.record(z.string(), z.unknown()),
   violationMessage: z.string(),
   severity: SeveritySchema,
   isActive: z.boolean(),
@@ -42,7 +42,7 @@ export const CreateExpensePolicySchema = z.object({
   appliesToDepartments: z.array(z.string().uuid()).optional().openapi({ description: 'Department IDs this policy applies to (null = all)' }),
   appliesToRoles: z.array(z.string()).optional().openapi({ example: ['employee'], description: 'Role names this policy applies to (null = all)' }),
   ruleType: RuleTypeSchema.openapi({ example: 'max_amount' }),
-  ruleConfig: z.record(z.unknown()).openapi({ example: { max_amount: 75, currency: 'USD' } }),
+  ruleConfig: z.record(z.string(), z.unknown()).openapi({ example: { max_amount: 75, currency: 'USD' } }),
   violationMessage: z.string().min(1).max(1000).openapi({ example: 'Individual meals cannot exceed $75 per company policy' }),
   severity: SeveritySchema.optional().openapi({ example: 'warning' }),
   isActive: z.boolean().optional().openapi({ example: true }),
@@ -58,7 +58,7 @@ export const UpdateExpensePolicySchema = z.object({
   appliesToDepartments: z.array(z.string().uuid()).nullable().optional(),
   appliesToRoles: z.array(z.string()).nullable().optional(),
   ruleType: RuleTypeSchema.optional(),
-  ruleConfig: z.record(z.unknown()).optional(),
+  ruleConfig: z.record(z.string(), z.unknown()).optional(),
   violationMessage: z.string().min(1).max(1000).optional(),
   severity: SeveritySchema.optional(),
   isActive: z.boolean().optional(),
@@ -70,8 +70,8 @@ export const UpdateExpensePolicySchema = z.object({
 export const ExpensePolicySortBySchema = z.enum(['name', 'code', 'ruleType', 'severity', 'effectiveDate', 'createdAt', 'updatedAt']);
 
 export const ExpensePolicyListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20'),
   isActive: z.string().transform((v) => v === 'true').optional(),
   ruleType: RuleTypeSchema.optional(),
   severity: SeveritySchema.optional(),

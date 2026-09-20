@@ -865,25 +865,24 @@
         "type": "object"
       },
       "CorrectApprovedReportRequest": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/VersionedCommandRequest"
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "type": "integer"
           },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "reason": {
-                "maxLength": 1000,
-                "minLength": 10,
-                "type": "string"
-              }
-            },
-            "required": [
-              "reason"
-            ],
-            "type": "object"
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 10,
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "expectedVersion",
+          "reason"
+        ],
+        "type": "object"
       },
       "CreateExpenseCategory": {
         "properties": {
@@ -3491,25 +3490,24 @@
         "type": "object"
       },
       "PayReportRequest": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/VersionedCommandRequest"
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "type": "integer"
           },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "paymentReference": {
-                "maxLength": 255,
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "paymentReference"
-            ],
-            "type": "object"
+          "paymentReference": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "expectedVersion",
+          "paymentReference"
+        ],
+        "type": "object"
       },
       "PendingApprovalItem": {
         "properties": {
@@ -3682,7 +3680,8 @@
               "low",
               "medium",
               "high",
-              "critical"
+              "critical",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -3846,25 +3845,24 @@
         "type": "object"
       },
       "PostReportRequest": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/VersionedCommandRequest"
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "type": "integer"
           },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "postingReference": {
-                "maxLength": 255,
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "postingReference"
-            ],
-            "type": "object"
+          "postingReference": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "expectedVersion",
+          "postingReference"
+        ],
+        "type": "object"
       },
       "Project": {
         "properties": {
@@ -5199,7 +5197,8 @@
               "cash",
               "bank_transfer",
               "mobile_pay",
-              "other"
+              "other",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -5231,7 +5230,8 @@
               "submitted",
               "approved",
               "rejected",
-              "paid"
+              "paid",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -5474,7 +5474,8 @@
           },
           "lookupSource": {
             "enum": [
-              "local:category"
+              "local:category",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -5569,7 +5570,8 @@
               "low",
               "medium",
               "high",
-              "critical"
+              "critical",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -6385,6 +6387,7 @@
         "description": "Get anomaly detection stats by type, severity, and resolution rate",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -6455,6 +6458,7 @@
         "description": "Get the most common query patterns/intents from LLM usage",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -6525,6 +6529,7 @@
         "description": "Get daily LLM query stats including queries/day, avg response time, tokens used, and active users",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -6595,6 +6600,7 @@
         "description": "Get response quality metrics per model (avg time, helpfulness rate, error rate)",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -6665,6 +6671,7 @@
         "description": "Get org-wide spending aggregates including top departments and categories",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -7293,6 +7300,7 @@
             }
           },
           {
+            "description": "Defaults to name ascending when omitted",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -7749,6 +7757,7 @@
         "description": "Returns monthly spending broken down by top N categories",
         "parameters": [
           {
+            "description": "Number of months to look back",
             "in": "query",
             "name": "months",
             "required": false,
@@ -7761,6 +7770,7 @@
             }
           },
           {
+            "description": "Number of top categories to include",
             "in": "query",
             "name": "limit",
             "required": false,
@@ -7869,6 +7879,7 @@
         "description": "Returns spending comparison between current and previous month or quarter",
         "parameters": [
           {
+            "description": "Period type for comparison",
             "in": "query",
             "name": "period",
             "required": false,
@@ -7932,6 +7943,7 @@
         "description": "Returns spending totals grouped by expense category for a given time period",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -7992,6 +8004,7 @@
         "description": "Returns monthly spending totals for a given number of months",
         "parameters": [
           {
+            "description": "Number of months to look back",
             "in": "query",
             "name": "months",
             "required": false,
@@ -8052,6 +8065,7 @@
         "description": "Returns top merchants ranked by total spending for a given time period",
         "parameters": [
           {
+            "description": "Number of days to look back",
             "in": "query",
             "name": "days",
             "required": false,
@@ -8064,6 +8078,7 @@
             }
           },
           {
+            "description": "Max merchants to return",
             "in": "query",
             "name": "limit",
             "required": false,
@@ -8124,6 +8139,7 @@
         "description": "Get the authenticated user's expense anomalies (paginated, filterable)",
         "parameters": [
           {
+            "description": "Filter by status (open, reviewed, dismissed, confirmed, escalated)",
             "in": "query",
             "name": "status",
             "required": false,
@@ -8133,6 +8149,7 @@
             }
           },
           {
+            "description": "Filter by severity (info, low, medium, high, critical)",
             "in": "query",
             "name": "severity",
             "required": false,
@@ -9517,6 +9534,7 @@
             }
           },
           {
+            "description": "Search in name, code, description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -9528,6 +9546,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -9544,6 +9563,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -9973,6 +9993,7 @@
             }
           },
           {
+            "description": "ISO 8601 timestamp. Returns only lines updated after this time, including deleted tombstones (sync mode).",
             "in": "query",
             "name": "updatedSince",
             "required": false,
@@ -9984,6 +10005,7 @@
             }
           },
           {
+            "description": "List mode only. Filter by report association: \"true\" for lines attached to a report, \"false\" for unassigned lines.",
             "in": "query",
             "name": "assigned",
             "required": false,
@@ -9998,6 +10020,7 @@
             }
           },
           {
+            "description": "List mode only. Search in description and category",
             "in": "query",
             "name": "search",
             "required": false,
@@ -10009,6 +10032,7 @@
             }
           },
           {
+            "description": "List mode only. Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -10026,6 +10050,7 @@
             }
           },
           {
+            "description": "List mode only. Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -10552,6 +10577,7 @@
             }
           },
           {
+            "description": "Search in name, code, description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -10563,6 +10589,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -10582,6 +10609,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -11044,6 +11072,7 @@
             }
           },
           {
+            "description": "Access scope: 'own' (default), 'team' (direct + indirect reports, recursive), 'department', or 'all'. Requires the matching report.view.{scope} permission for anything other than 'own'; returns 403 if the caller lacks it.",
             "in": "query",
             "name": "scope",
             "required": false,
@@ -11061,6 +11090,7 @@
             }
           },
           {
+            "description": "Search in title and description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -11072,6 +11102,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -11090,6 +11121,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -11105,6 +11137,7 @@
             }
           },
           {
+            "description": "ISO 8601 timestamp. Returns only records updated after this time, including deleted tombstones.",
             "in": "query",
             "name": "updatedSince",
             "required": false,
@@ -11599,6 +11632,7 @@
             }
           },
           {
+            "description": "Search in description and category",
             "in": "query",
             "name": "search",
             "required": false,
@@ -11610,6 +11644,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -11627,6 +11662,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -11924,6 +11960,7 @@
             }
           },
           {
+            "description": "Search in file name",
             "in": "query",
             "name": "search",
             "required": false,
@@ -11935,6 +11972,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -11950,6 +11988,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -12303,6 +12342,7 @@
         "description": "Get the authenticated user's proactive insights (paginated, filterable)",
         "parameters": [
           {
+            "description": "Filter by insight type (trend, anomaly, recommendation, comparison, forecast, summary)",
             "in": "query",
             "name": "type",
             "required": false,
@@ -12334,6 +12374,7 @@
             }
           },
           {
+            "description": "Include dismissed insights",
             "in": "query",
             "name": "includeStale",
             "required": false,
@@ -12622,6 +12663,7 @@
             }
           },
           {
+            "description": "Search in name, description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -12633,6 +12675,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -12650,6 +12693,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -13184,6 +13228,7 @@
             }
           },
           {
+            "description": "Search in name and description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -13195,6 +13240,7 @@
             }
           },
           {
+            "description": "Filter by category",
             "in": "query",
             "name": "category",
             "required": false,
@@ -13206,6 +13252,7 @@
             }
           },
           {
+            "description": "Filter by risk level",
             "in": "query",
             "name": "riskLevel",
             "required": false,
@@ -13222,6 +13269,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -13238,6 +13286,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -13562,6 +13611,7 @@
             }
           },
           {
+            "description": "Filter by client name (partial match)",
             "in": "query",
             "name": "clientName",
             "required": false,
@@ -13572,6 +13622,7 @@
             }
           },
           {
+            "description": "Search in name, code, description, client name",
             "in": "query",
             "name": "search",
             "required": false,
@@ -13583,6 +13634,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -13604,6 +13656,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -14967,6 +15020,7 @@
             }
           },
           {
+            "description": "Search in name and description",
             "in": "query",
             "name": "search",
             "required": false,
@@ -14978,6 +15032,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -14994,6 +15049,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,
@@ -15544,6 +15600,7 @@
             }
           },
           {
+            "description": "Requesting user's role code; defaults to no role-specific rules applied (base schema) when omitted",
             "in": "query",
             "name": "role",
             "required": false,
@@ -15554,6 +15611,7 @@
             }
           },
           {
+            "description": "Consuming platform (mobile/web/mcp); defaults to no platform filtering (today's exact output) when omitted",
             "in": "query",
             "name": "platform",
             "required": false,
@@ -15663,6 +15721,7 @@
             }
           },
           {
+            "description": "Search in email, username, first name, last name",
             "in": "query",
             "name": "search",
             "required": false,
@@ -15674,6 +15733,7 @@
             }
           },
           {
+            "description": "Field to sort by",
             "in": "query",
             "name": "sortBy",
             "required": false,
@@ -15693,6 +15753,7 @@
             }
           },
           {
+            "description": "Sort direction",
             "in": "query",
             "name": "sortOrder",
             "required": false,

@@ -40,8 +40,8 @@ export const UpdatePermissionSchema = z.object({
 export const PermissionSortBySchema = z.enum(['name', 'category', 'riskLevel', 'createdAt']);
 
 export const PermissionListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
   search: z.string().max(255).optional().openapi({ example: 'report', description: 'Search in name and description' }),
   category: z.string().max(100).optional().openapi({ example: 'report', description: 'Filter by category' }),
   riskLevel: PermissionRiskLevelSchema.optional().openapi({ example: 'high', description: 'Filter by risk level' }),

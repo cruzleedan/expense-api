@@ -10,7 +10,7 @@ export const ReceiptSchema = z.object({
   fileHash: z.string(),
   mimeType: z.string(),
   fileSize: z.number(),
-  parsedData: z.record(z.unknown()).nullable(),
+  parsedData: z.record(z.string(), z.unknown()).nullable(),
   thumbnailUrl: z.string().url().optional().openapi({ description: 'Thumbnail URL for image receipts' }),
   createdAt: z.string().datetime(),
 }).openapi('Receipt');
@@ -36,8 +36,8 @@ export const ReceiptUploadResponseSchema = z.object({
 export const ReceiptSortBySchema = z.enum(['fileName', 'fileSize', 'createdAt']);
 
 export const ReceiptListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
   search: z.string().max(255).optional().openapi({ example: 'invoice', description: 'Search in file name' }),
   sortBy: ReceiptSortBySchema.optional().openapi({ example: 'createdAt', description: 'Field to sort by' }),
   sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'desc', description: 'Sort direction' }),

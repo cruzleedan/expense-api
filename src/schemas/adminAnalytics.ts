@@ -1,7 +1,7 @@
 import { z } from '@hono/zod-openapi';
 
 export const DaysQuerySchema = z.object({
-  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(365)).default('30').openapi({
+  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(365)).prefault('30').openapi({
     example: '30',
     description: 'Number of days to look back',
   }),

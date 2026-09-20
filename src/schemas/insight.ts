@@ -13,7 +13,7 @@ export const InsightSchema = z.object({
   insightType: z.string(),
   title: z.string(),
   content: z.string(),
-  supportingData: z.record(z.unknown()).nullable(),
+  supportingData: z.record(z.string(), z.unknown()).nullable(),
   confidence: z.number().nullable(),
   isPinned: z.boolean(),
   isStale: z.boolean(),
@@ -32,8 +32,8 @@ export const UnreadCountSchema = z.object({
 
 export const InsightQuerySchema = z.object({
   type: z.string().optional().openapi({ description: 'Filter by insight type (trend, anomaly, recommendation, comparison, forecast, summary)' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
-  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0)).default('0').openapi({ example: '0' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
+  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0)).prefault('0').openapi({ example: '0' }),
   includeStale: z.enum(['true', 'false']).default('false').transform(v => v === 'true').openapi({ description: 'Include dismissed insights' }),
 });
 
@@ -53,7 +53,7 @@ export const AnomalySchema = z.object({
   anomalyType: z.string(),
   severity: z.string(),
   confidence: z.number(),
-  context: z.record(z.unknown()),
+  context: z.record(z.string(), z.unknown()),
   explanation: z.string(),
   status: z.string(),
   reviewedBy: z.string().uuid().nullable(),
@@ -70,8 +70,8 @@ export const AnomalyListSchema = z.object({
 export const AnomalyQuerySchema = z.object({
   status: z.string().optional().openapi({ description: 'Filter by status (open, reviewed, dismissed, confirmed, escalated)' }),
   severity: z.string().optional().openapi({ description: 'Filter by severity (info, low, medium, high, critical)' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
-  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0)).default('0').openapi({ example: '0' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
+  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0)).prefault('0').openapi({ example: '0' }),
 });
 
 export const AnomalyIdParamSchema = z.object({

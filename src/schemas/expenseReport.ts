@@ -97,8 +97,8 @@ export const DeleteExpenseReportQuerySchema = z.object({
 export const ExpenseReportSortBySchema = z.enum(['title', 'status', 'totalAmount', 'createdAt', 'updatedAt', 'submittedAt']);
 
 export const ExpenseReportListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20'),
   status: ExpenseReportStatusSchema.optional(),
   // WORK-0023: explicit, client-controlled scope. Defaults to 'own' — identical to
   // pre-WORK-0023 behavior. 'team'/'department'/'all' require the caller to hold the

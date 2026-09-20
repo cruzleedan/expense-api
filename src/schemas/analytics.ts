@@ -1,14 +1,14 @@
 import { z } from '@hono/zod-openapi';
 
 export const AnalyticsQuerySchema = z.object({
-  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(365)).default('30').openapi({
+  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(365)).prefault('30').openapi({
     example: '30',
     description: 'Number of days to look back',
   }),
 });
 
 export const TrendQuerySchema = z.object({
-  months: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(24)).default('12').openapi({
+  months: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(24)).prefault('12').openapi({
     example: '12',
     description: 'Number of months to look back',
   }),
@@ -76,11 +76,11 @@ export const DashboardSummaryResponseSchema = z.object({
 
 // Top Merchants
 export const TopMerchantQuerySchema = z.object({
-  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(365)).default('30').openapi({
+  days: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(365)).prefault('30').openapi({
     example: '30',
     description: 'Number of days to look back',
   }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(50)).default('10').openapi({
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(50)).prefault('10').openapi({
     example: '10',
     description: 'Max merchants to return',
   }),
@@ -98,11 +98,11 @@ export const TopMerchantResponseSchema = z.object({
 
 // Category Trend
 export const CategoryTrendQuerySchema = z.object({
-  months: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(24)).default('6').openapi({
+  months: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(24)).prefault('6').openapi({
     example: '6',
     description: 'Number of months to look back',
   }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(20)).default('5').openapi({
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(20)).prefault('5').openapi({
     example: '5',
     description: 'Number of top categories to include',
   }),

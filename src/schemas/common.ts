@@ -15,8 +15,8 @@ export const MessageSchema = z.object({
 
 // Pagination
 export const PaginationQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20').openapi({ example: '20' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20').openapi({ example: '20' }),
   search: z.string().max(255).optional().openapi({ example: 'quarterly report', description: 'Search term to filter results' }),
   sortBy: z.string().optional().openapi({ description: 'Field to sort by (resource-specific allowed values)' }),
   sortOrder: z.enum(['asc', 'desc']).default('asc').openapi({ example: 'asc', description: 'Sort direction' }),
@@ -53,8 +53,8 @@ export const TimestampFields = {
 
 // Sync manifest — lightweight reconciliation payload (id + tombstone marker only)
 export const SyncManifestQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1').openapi({ example: '1' }),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(1000)).default('500').openapi({ example: '500' }),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1').openapi({ example: '1' }),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(1000)).prefault('500').openapi({ example: '500' }),
 });
 
 export const SyncManifestItemSchema = z.object({

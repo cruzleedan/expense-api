@@ -68,8 +68,8 @@ export const UpdateProjectSchema = z.object({
 export const ProjectSortBySchema = z.enum(['name', 'code', 'status', 'budgetAmount', 'spentAmount', 'startDate', 'endDate', 'createdAt', 'updatedAt']);
 
 export const ProjectListQuerySchema = z.object({
-  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).default('20'),
+  page: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive()).prefault('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().positive().max(100)).prefault('20'),
   status: ProjectStatusSchema.optional(),
   departmentId: z.string().uuid().optional(),
   ownerUserId: z.string().uuid().optional(),
