@@ -162,7 +162,8 @@ test('WORK-0030 session, identity, and account lifecycle regressions', {
     const tokens = await generateTokens(user);
     assert.equal((await getUserSessions(user.id)).length, 1);
     assert.equal((await pool.query('SELECT 1 FROM refresh_tokens WHERE user_id = $1 AND auth_version = 1 AND revoked_at IS NULL', [user.id])).rowCount, 6);
-    const forgedBinding = await new jose.SignJWT({ ...jose.decodeJwt(tokens.accessToken), refresh_token_id: legacyIds[0] })
+    // jose 6 types decodeJwt's result as an unconstrained generic, which can't be spread; name the payload type (WORK-0052).
+    const forgedBinding = await new jose.SignJWT({ ...jose.decodeJwt<jose.JWTPayload>(tokens.accessToken), refresh_token_id: legacyIds[0] })
       .setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(env.JWT_SECRET));
     await assert.rejects(verifyAccessToken(forgedBinding), /revoked/);
   });

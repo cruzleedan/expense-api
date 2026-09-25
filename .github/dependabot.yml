@@ -9,6 +9,12 @@ updates:
       aws-sdk:
         patterns:
           - "@aws-sdk/*"
+    ignore:
+      # WORK-0052: @types/node tracks the Node runtime (22: engines, Dockerfile,
+      # CI). A newer major would type APIs that don't exist in production;
+      # move it deliberately together with a runtime upgrade.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
