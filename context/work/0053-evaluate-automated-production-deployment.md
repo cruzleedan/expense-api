@@ -52,8 +52,8 @@ Automate the **image-only rollout** that the release gates already describe.
 Leave database changes manual, and don't place a GitHub runner on d3. The
 proposed mechanism is **pull-based**:
 
-- A root-owned-free systemd **timer + service on d3**, running as the
-  deploying user, polls every few minutes. It deploys only when **all** of
+- A systemd **timer + service on d3**, running as the deploying user (not
+  root), polls every few minutes. It deploys only when **all** of
   these hold:
   - `origin/main` has a new commit;
   - that commit's required CI checks (`verify`, `postgres`,
