@@ -1,7 +1,7 @@
 ---
 id: 0052
 title: "Upgrade jose to v6; keep @types/node on the Node 22 runtime line"
-status: building
+status: shipped
 kind: infra
 opened: 2026-09-25
 decided: 2026-09-25
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-09-25 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | infra |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -90,7 +90,7 @@ Dependabot ignore rule. No API contract, database, or deployment change.
       pass.
 - [x] The production image passes a fresh audit, and the OpenAPI contract is
       unchanged.
-- [ ] One PR replaces #29/#31. Both standalone PRs are closed unmerged, with
+- [x] One PR replaces #29/#31. Both standalone PRs are closed unmerged, with
       the rationale.
 
 ## Log
@@ -119,3 +119,8 @@ Dependabot ignore rule. No API contract, database, or deployment change.
   --audit-level=high` of the built production image found 0 vulnerabilities.
   The embedded SBOM lists jose 6.2.12 (56 components). No deployment was
   requested or performed; the running d3 service is unchanged.
+- 2026-09-25 shipped — PR #32 passed CI (verify, isolated PostgreSQL,
+  production-image) and was merged as 348c3db. `main` CI passed on the merge.
+  #31 and #29 were closed unmerged, with rationale comments, and their branches
+  deleted. Deployment: none requested; the running d3 service still has the
+  previous dependencies until its next image rebuild.
