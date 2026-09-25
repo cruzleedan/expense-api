@@ -42,14 +42,14 @@
     "hono": "^4.13.7",
     "jose": "^6.2.12",
     "node-cron": "^4.6.0",
-    "pg": "^8.13.1",
+    "pg": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^13.0.0",
     "@types/node": "^22.20.4",
     "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.11.10",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   },
